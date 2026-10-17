@@ -68,7 +68,8 @@ describe('card billing address before issuance', () => {
     fixture.cards = [{ id: 'fixture-own-card', status: 'pending', pendingOperationId: id, pendingOperationStatus: status,
       productName: 'Fixture Visa', last4: null, holderName: null, expiryMonth: null, expiryYear: null, currency: 'USD', balance: '0', failureReason: null, createdAt: '2026-10-17T00:00:00Z' }];
     const html = screen(CardIssue);
-    expect(html).toContain(status === 'unknown' ? 'Проверяем результат выпуска.' : 'Запрос на выпуск принят.');
+    expect(html).toContain(status === 'unknown' ? 'Проверяем заявку на карту' : 'Запрос на выпуск принят.');
+    expect(html).not.toContain('Адрес для карты');
     expect(html).not.toContain('Сохранить адрес'); expect(html).not.toContain('Выпустить за'); expect(html).not.toContain(id);
   });
   it('waits for the initial own-card read and refuses another issue confirmation when that read fails', () => {

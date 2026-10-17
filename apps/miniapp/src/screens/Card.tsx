@@ -134,19 +134,18 @@ function CardView({ card }: { card: CardDto }) {
       {card.status === 'pending' && (card.pendingOperationStatus === 'unknown' || issueRestricted) ? (
         <Surface className="stack card-operation-progress">
           <div className="card-operation-progress-copy" role="status" aria-live="polite">
-            <span className="body-medium">{t(issueRestricted ? 'issue.restrictedTitle' : 'issue.processingTitle')}</span>
-            <span className="caption muted">{t(issueRestricted ? 'errors.card_region_restricted' : 'issue.checkingText')}</span>
+            <span className="body-medium">{t(issueRestricted ? 'issue.restrictedTitle' : 'issue.reviewTitle')}</span>
+            <span className="caption muted">{t(issueRestricted ? 'errors.card_region_restricted' : 'issue.reviewText')}</span>
           </div>
           <Button variant="secondary" title={t('common.refresh')} loading={cards.isFetching} onClick={() => void cards.refetch()} />
-          {!issueRestricted ? <Button variant="secondary" title={t('billing.title')} onClick={() => navigate('/card/billing')} /> : null}
-          {!issueRestricted ? <AdditionalAttemptEntry /> : null}
+          {!issueRestricted && config?.integration.issuanceMode === 'automatic' ? <AdditionalAttemptEntry /> : null}
         </Surface>
       ) : card.status === 'pending' ? (
         <Surface className="promo">
           <Mascot pose="thinking" size={110} />
           <div className="stack-sm grow">
-            <span className="body-medium">{t('card.issuing')}</span>
-            <span className="caption muted">{t('card.issuingHint')}</span>
+            <span className="body-medium">{t('issue.pendingTitle')}</span>
+            <span className="caption muted">{t('issue.pendingText')}</span>
           </div>
         </Surface>
       ) : (

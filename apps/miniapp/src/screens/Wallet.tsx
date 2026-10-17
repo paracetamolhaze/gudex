@@ -161,6 +161,7 @@ export function CardOperationProgress({ operationId, title, kind, issueRestricti
   const { t } = useTranslation();
   const navigate = useNavigate();
   const operation = useOperation(operationId);
+  const { data: config } = useConfig();
   const status = operation.data?.status;
   const manualPending = kind === 'issue' && operation.data?.fulfillmentMode === 'manual' && status === 'pending';
   const restricted = kind === 'issue' && (operation.data?.issueRestriction ?? issueRestriction) === 'billing_phone_region_restricted';
@@ -175,14 +176,13 @@ export function CardOperationProgress({ operationId, title, kind, issueRestricti
         : status === 'failed' ? <Notice tone="danger" text={t(`${kind}.failedText`)} />
           : <Surface className="stack card-operation-progress">
             <div className="card-operation-progress-copy" role="status" aria-live="polite">
-              <span className="body-medium">{t(restricted ? 'issue.restrictedTitle' : manualPending ? 'issue.manualTitle' : `${kind}.processingTitle`)}</span>
-              <span className="caption muted">{t(restricted ? 'errors.card_region_restricted' : manualPending ? 'issue.manualText' : `${kind}.${status === 'unknown' ? 'checkingText' : 'processingText'}`)}</span>
+              <span className="body-medium">{t(restricted ? 'issue.restrictedTitle' : manualPending ? 'issue.manualTitle' : kind === 'issue' && status === 'unknown' ? 'issue.reviewTitle' : `${kind}.processingTitle`)}</span>
+              <span className="caption muted">{t(restricted ? 'errors.card_region_restricted' : manualPending ? 'issue.manualText' : kind === 'issue' && status === 'unknown' ? 'issue.reviewText' : `${kind}.${status === 'unknown' ? 'checkingText' : 'processingText'}`)}</span>
             </div>
             {status === 'unknown' ? <Button variant="secondary" title={t('common.refresh')} loading={operation.isFetching} onClick={() => void operation.refetch()} /> : null}
           </Surface>}
       <Button title={t('home.card')} icon="card" onClick={() => navigate('/card', { replace: true })} />
-      {kind === 'issue' && status === 'unknown' && !restricted ? <Button title={t('billing.title')} variant="secondary" onClick={() => navigate('/card/billing')} /> : null}
-      {kind === 'issue' && status === 'unknown' && !restricted ? <AdditionalAttemptEntry /> : null}
+      {kind === 'issue' && status === 'unknown' && !restricted && config?.integration.issuanceMode === 'automatic' ? <AdditionalAttemptEntry /> : null}
     </Page>
   );
 }
@@ -209,7 +209,7 @@ export function CardIssue() {
   if (!cardsQuery.data) return <Loading />;
   const pendingCard = cardsQuery.data.find(card => card.status === 'pending');
   if (pendingCard?.pendingOperationId) return <CardOperationProgress operationId={pendingCard.pendingOperationId} issueRestriction={pendingCard.issueRestriction} title={t('issue.title')} kind="issue" />;
-  if (pendingCard) return <Page title={t('issue.title')}><Notice text={t(pendingCard.issueRestriction === 'billing_phone_region_restricted' ? 'errors.card_region_restricted' : 'issue.processingTitle')} />
+  if (pendingCard) return <Page title={t('issue.title')}><Notice text={t(pendingCard.issueRestriction === 'billing_phone_region_restricted' ? 'errors.card_region_restricted' : 'issue.reviewTitle')} />
     <Button title={t('home.card')} onClick={() => navigate('/card', { replace: true })} /></Page>;
   if (configQuery.error && !config) return <Page title={t('issue.title')}><QueryError error={configQuery.error} onRetry={() => void configQuery.refetch()} /></Page>;
   if (walletQuery.error && !wallet) return <Page title={t('issue.title')}><QueryError error={walletQuery.error} onRetry={() => void walletQuery.refetch()} /></Page>;

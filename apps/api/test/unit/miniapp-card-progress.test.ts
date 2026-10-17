@@ -15,7 +15,7 @@ const { CardOperationProgress } = await vi.importActual<{ CardOperationProgress:
   operationId: string; title: string; kind: 'issue' | 'topup';
 }) => ReactElement }>('../../../miniapp/src/screens/Wallet');
 const fixture = vi.hoisted(() => ({ language: 'ru', operation: undefined as OperationDto | undefined,
-  card: undefined as CardDto | undefined, quoteError: null as unknown, additionalRead: vi.fn() }));
+  card: undefined as CardDto | undefined, quoteError: null as unknown, additionalRead: vi.fn(), issuanceMode: 'automatic' as 'automatic' | 'manual' }));
 
 vi.mock('react-i18next', async () => {
   const { ru } = await import('../../../miniapp/src/i18n/ru');
@@ -36,7 +36,7 @@ vi.mock('../../../miniapp/src/components/Mascot', () => ({ Mascot: () => null, C
 vi.mock('../../../miniapp/src/lib/queries', () => ({
   useOperation: (id: string | null) => ({ data: id ? fixture.operation : undefined, refetch: vi.fn() }),
   useCards: () => ({ data: fixture.card ? [fixture.card] : [], isLoading: false, refetch: vi.fn() }),
-  useConfig: () => ({ data: { integration: { capabilities: { topup: true, freeze: true } } } }),
+  useConfig: () => ({ data: { integration: { issuanceMode: fixture.issuanceMode, capabilities: { topup: true, freeze: true } } } }),
   useActivity: () => ({ data: [] }), useSetFrozen: () => ({ isPending: false }),
   useSimulatePurchase: () => ({ isPending: false }), useCardSensitive: () => ({ isPending: false }),
   useMe: () => ({}), useWallet: () => ({}), useIssueCard: () => ({}), useIssueQuote: () => ({}),
@@ -51,6 +51,7 @@ beforeEach(() => {
   fixture.additionalRead.mockClear(); fixture.quoteError = null;
   vi.stubGlobal('fetch', fetch);
   fixture.language = 'ru';
+  fixture.issuanceMode = 'automatic';
   fixture.operation = { id: operationId, type: 'issue', status: 'unknown' } as OperationDto;
   fixture.card = { id: 'fixture-card', status: 'pending', pendingOperationStatus: 'unknown', balance: '0', last4: null } as CardDto;
 });
@@ -74,7 +75,7 @@ describe('customer card issuance progress', () => {
   it('keeps the old unknown result intact while explaining a current typed restriction from the additional quote', () => {
     fixture.quoteError = new ApiError('card_region_restricted', 'PRIVATE upstream payload', 422);
     const html = progress();
-    expect(html).toContain('Проверяем результат выпуска.');
+    expect(html).toContain('Проверяем заявку на карту');
     expect(html).toContain('Для этой карты не поддерживается телефонный код, указанный в ваших данных.');
     expect(html).not.toContain('PRIVATE'); expect(html).not.toContain('Разрешить попытку');
     expect(fixture.operation?.status).toBe('unknown'); expect(fixture.operation?.issueRestriction).toBeUndefined();
@@ -92,7 +93,9 @@ describe('customer card issuance progress', () => {
   });
   it('shows a neutral unknown issuance result without a raw operation ID or a false success', () => {
     const html = progress();
-    expect(html).toContain('Проверяем результат выпуска. Статус обновится автоматически.');
+    expect(html).toContain('Сообщим вам в Telegram, когда проверка завершится.');
+    expect(html).not.toContain('Адрес для карты');
+    expect(html).not.toContain('Завершаем выпуск');
     expect(html).not.toContain(operationId);
     expect(html).not.toContain('зарезервирован');
     expect(html).not.toContain('Операция выполнена');
@@ -100,7 +103,9 @@ describe('customer card issuance progress', () => {
   it('keeps the pending card as issuance and places its refresh action outside the status text', () => {
     const html = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(CardScreen)));
     expect(html).toContain('Выпуск карты');
-    expect(html).toContain('Проверяем результат выпуска. Статус обновится автоматически.');
+    expect(html).toContain('Сообщим вам в Telegram, когда проверка завершится.');
+    expect(html).not.toContain('Адрес для карты');
+    expect(html).not.toContain('Завершаем выпуск');
     expect(html).not.toContain('На проверке');
     expect(html).not.toContain('Карта готова');
     expect(html).not.toMatch(/<div class="notice[^"]*">(?:(?!<\/div>)[\s\S])*<button[^>]*>Обновить[^<]*<\/button><\/div>/);
@@ -108,7 +113,7 @@ describe('customer card issuance progress', () => {
   it.each(['pending', 'processing', undefined] as const)('does not announce success or failure while the issue DTO status is %s', status => {
     fixture.operation = status ? { ...fixture.operation!, status } : undefined;
     const html = progress();
-    expect(html).toContain('Завершаем выпуск карты');
+    expect(html).toContain('Заявка на выпуск карты');
     expect(html).toContain('Запрос на выпуск принят. Статус обновится автоматически.');
     expect(html).not.toContain('Карта выпущена.');
     expect(html).not.toContain('Не удалось выпустить карту.');
@@ -143,12 +148,28 @@ describe('customer card issuance progress', () => {
     const operationHtml = progress();
     const cardHtml = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(CardScreen)));
     for (const html of [operationHtml, cardHtml]) {
-      expect(html).toContain('We’re checking the issuance result. The status updates automatically.');
+      expect(html).toContain('We will notify you in Telegram when the review is complete.');
+      expect(html).not.toContain('Billing address');
+      expect(html).not.toContain('Completing card issuance');
       expect(html).not.toContain('Funds remain reserved');
       expect(html).not.toContain('Card issued.');
       expect(html).not.toContain(operationId);
     }
     expect(cardHtml).toContain('Card issuance');
     expect(cardHtml).not.toContain('Under review');
+  });
+  it('keeps manual pending and unknown requests free of address and additional-issuance actions', () => {
+    fixture.issuanceMode = 'manual';
+    for (const status of ['pending', 'unknown'] as const) {
+      fixture.operation = { ...fixture.operation!, status, fulfillmentMode: status === 'pending' ? 'manual' : 'automatic' };
+      fixture.card = { ...fixture.card!, pendingOperationStatus: status };
+      for (const html of [progress(), renderToStaticMarkup(createElement(MemoryRouter, null, createElement(CardScreen)))]) {
+        expect(html).not.toContain('Адрес для карты');
+        expect(html).not.toContain('Завершаем выпуск');
+        expect(html).not.toContain('обновится автоматически');
+        expect(html).toContain('Telegram');
+      }
+    }
+    expect(fixture.additionalRead).not.toHaveBeenCalled();
   });
 });
