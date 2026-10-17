@@ -1,0 +1,986 @@
+/* Тёмная тема GUDEX: графит + фирменный синий (#2E66E9 / #3DAEEC), под стиль маскота. */
+:root {
+  --bg: #07090f;
+  --surface: #10141d;
+  --surface-2: #171c28;
+  --border: #1f2533;
+  --text: #f3f5fa;
+  --muted: #8a93a6;
+  --primary: #3b74f2;
+  --primary-strong: #2e66e9;
+  --accent: #3daeec;
+  --success: #2cc28a;
+  --danger: #ff5a60;
+  --warning: #f5b13d;
+  --warning-bg: rgba(245, 177, 61, 0.12);
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+  --tabbar-height: 64px;
+  /* Высота окна Mini App (Telegram задаёт переменную сам). От неё зависят размеры экранов без прокрутки. */
+  --screen-h: var(--tg-viewport-stable-height, 100dvh);
+  --key: clamp(54px, calc((var(--screen-h) - 290px) / 4.6), 76px);
+  --pin-gap: clamp(10px, calc(var(--screen-h) * 0.03), 24px);
+  --font: 'Inter Tight Variable', 'Inter Tight', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  overscroll-behavior: none;
+}
+
+/* Полоса прокрутки не видна, но прокрутка работает (Telegram Desktop и браузеры её иначе рисуют). */
+html,
+body {
+  scrollbar-width: none;
+}
+
+::-webkit-scrollbar {
+  display: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+input {
+  font: inherit;
+}
+
+/* ─── Раскладка ──────────────────────────────────────────────────────── */
+
+.page {
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 16px 16px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.page.with-tabbar {
+  padding-bottom: calc(var(--tabbar-height) + 24px + env(safe-area-inset-bottom));
+}
+
+.center-screen {
+  min-height: 100vh;
+  min-height: var(--tg-viewport-stable-height, 100dvh);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 24px;
+  text-align: center;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.between {
+  justify-content: space-between;
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.stack-sm {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ─── Типографика ────────────────────────────────────────────────────── */
+
+.display {
+  font-size: 38px;
+  line-height: 1.1;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.title {
+  font-size: 26px;
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+.heading {
+  font-size: 18px;
+  line-height: 1.3;
+  font-weight: 600;
+  margin: 0;
+}
+
+.body-medium {
+  font-weight: 500;
+}
+
+.label {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.caption {
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.danger-text {
+  color: var(--danger);
+}
+
+.success-text {
+  color: var(--success);
+}
+
+.link {
+  color: var(--primary);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.ellipsis {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mono {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── Поверхности ────────────────────────────────────────────────────── */
+
+.surface {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+}
+
+.surface.flush {
+  padding: 0;
+}
+
+.list-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  width: 100%;
+  background: none;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.list-item + .list-item {
+  border-top: 1px solid var(--border);
+}
+
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.notice.warning {
+  background: var(--warning-bg);
+}
+
+.notice svg {
+  flex-shrink: 0;
+}
+
+.card-operation-progress {
+  align-items: stretch;
+}
+
+.card-operation-progress-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.card-operation-progress-copy .caption {
+  line-height: 1.45;
+}
+
+/* ─── Кнопки ─────────────────────────────────────────────────────────── */
+
+.btn {
+  height: 52px;
+  border-radius: var(--radius-md);
+  border: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 16px;
+  font-weight: 600;
+  font-size: 16px;
+  cursor: pointer;
+  transition: transform 0.08s ease, opacity 0.15s ease;
+  width: 100%;
+}
+
+.btn:active {
+  transform: scale(0.98);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+  transform: none;
+}
+
+.btn.primary {
+  background: linear-gradient(135deg, var(--primary-strong), var(--primary));
+  color: #fff;
+}
+
+.btn.secondary {
+  background: var(--surface-2);
+  color: var(--primary);
+}
+
+.btn.ghost {
+  background: transparent;
+  color: var(--primary);
+}
+
+.btn.danger {
+  background: var(--surface-2);
+  color: var(--danger);
+}
+
+.btn.small {
+  height: 36px;
+  width: auto;
+  font-size: 14px;
+}
+
+.actions {
+  display: flex;
+}
+
+.action {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.action-icon {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.08s ease;
+}
+
+.action:active .action-icon {
+  transform: scale(0.94);
+}
+
+/* ─── Поля ───────────────────────────────────────────────────────────── */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.input {
+  height: 52px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  padding: 0 16px;
+  font-size: 16px;
+  font-weight: 500;
+  outline: none;
+  width: 100%;
+}
+
+.input:focus {
+  border-color: var(--primary);
+}
+
+.input.error {
+  border-color: var(--danger);
+}
+
+.select-control {
+  position: relative;
+}
+
+.select-control > .input {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 50px;
+}
+
+.select-chevron {
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  display: flex;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.segmented {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.segmented button {
+  flex: 1;
+  min-width: 0;
+  height: 40px;
+  padding: 0 4px;
+  font-size: 14px;
+  white-space: nowrap;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.segmented button.active {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ─── Нижнее меню ────────────────────────────────────────────────────── */
+
+.tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(var(--tabbar-height) + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
+  display: flex;
+  background: rgba(10, 13, 20, 0.92);
+  backdrop-filter: blur(16px);
+  border-top: 1px solid var(--border);
+  z-index: 10;
+}
+
+.tabbar a {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.tabbar a.active {
+  color: var(--primary);
+}
+
+/* ─── Модальные окна ─────────────────────────────────────────────────── */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(3, 5, 10, 0.6);
+  z-index: 30;
+  animation: fade-in 0.18s ease;
+}
+
+.sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-width: 520px;
+  margin: 0 auto;
+  background: var(--surface);
+  border-top-left-radius: var(--radius-xl);
+  border-top-right-radius: var(--radius-xl);
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  padding: 24px 24px calc(24px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  z-index: 31;
+  animation: slide-up 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.fullscreen {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+  animation: fade-in 0.15s ease;
+}
+
+.icon-circle {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-gradient {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--primary-strong), var(--accent));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ─── Код-пароль ─────────────────────────────────────────────────────── */
+
+.pin-dots {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+}
+
+.pin-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--primary);
+}
+
+.pin-dot.filled {
+  background: var(--primary);
+}
+
+.pin-dots.error .pin-dot {
+  border-color: var(--danger);
+}
+
+.pin-dots.error .pin-dot.filled {
+  background: var(--danger);
+}
+
+.pin-dots.shake {
+  animation: shake 0.35s ease;
+}
+
+/* Знакомство при первом открытии: на невысоких экранах убираем подписи, чтобы всё влезло без прокрутки. */
+.welcome {
+  --welcome-mascot: clamp(100px, calc(var(--screen-h) * 0.26), 250px);
+  padding-bottom: calc(104px + env(safe-area-inset-bottom));
+}
+
+.welcome-title {
+  font-size: clamp(24px, calc(var(--screen-h) * 0.042), 30px);
+}
+
+.welcome .welcome-feature {
+  gap: 8px;
+}
+
+@media (max-height: 760px) {
+  .welcome {
+    gap: 12px;
+  }
+
+  .welcome-subtitle,
+  .welcome-feature-text {
+    display: none;
+  }
+
+  .welcome .welcome-feature {
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .welcome .icon-gradient {
+    width: 34px;
+    height: 34px;
+    flex-shrink: 0;
+  }
+}
+
+/* Экран ввода кода целиком помещается в окно: маскот и кнопки ужимаются под его высоту. */
+.lock-screen {
+  height: var(--screen-h);
+  min-height: 0;
+  overflow: hidden;
+  justify-content: space-evenly;
+  gap: 4px;
+  padding: 12px 24px calc(12px + env(safe-area-inset-bottom));
+  --mascot-h: clamp(60px, calc(var(--screen-h) * 0.17), 120px);
+}
+
+.pin-pad {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--pin-gap);
+}
+
+.keypad {
+  display: grid;
+  grid-template-columns: repeat(3, var(--key));
+  gap: calc(var(--key) * 0.18) calc(var(--key) * 0.37);
+  justify-content: center;
+}
+
+.key {
+  width: var(--key);
+  height: var(--key);
+  border-radius: 50%;
+  border: 0;
+  background: var(--surface-2);
+  font-size: calc(var(--key) * 0.37);
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s ease, transform 0.08s ease;
+}
+
+.key:active {
+  background: var(--border);
+  transform: scale(0.95);
+}
+
+.key.plain {
+  background: transparent;
+}
+
+.key.hidden {
+  visibility: hidden;
+}
+
+/* ─── Карта ──────────────────────────────────────────────────────────── */
+
+.bank-card {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1.586;
+  border-radius: var(--radius-lg);
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+  background: radial-gradient(120% 140% at 100% 0%, #1d2a4d 0%, #10131c 45%, #090b11 100%);
+  border: 1px solid rgba(97, 140, 255, 0.28);
+  box-shadow: 0 18px 40px rgba(18, 52, 140, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  color: #fff;
+}
+
+.bank-card .watermark {
+  position: absolute;
+  right: -28px;
+  bottom: -36px;
+  opacity: 0.07;
+  pointer-events: none;
+}
+
+.bank-card.frozen > :not(.card-overlay) {
+  opacity: 0.4;
+}
+
+.bank-card .number {
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+}
+
+.bank-card .visa {
+  font-size: 26px;
+  font-weight: 800;
+  font-style: italic;
+  letter-spacing: 0.02em;
+}
+
+.card-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: rgba(7, 9, 15, 0.7);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+/* ─── Разное ─────────────────────────────────────────────────────────── */
+
+.spinner {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2.5px solid rgba(255, 255, 255, 0.18);
+  border-top-color: var(--primary);
+  animation: spin 0.8s linear infinite;
+}
+
+.spinner.large {
+  width: 36px;
+  height: 36px;
+  border-width: 3px;
+}
+
+.qr {
+  background: #fff;
+  border-radius: var(--radius-md);
+  padding: 12px;
+  width: 224px;
+  height: 224px;
+}
+
+.qr svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.step-number {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.switch {
+  position: relative;
+  width: 50px;
+  height: 30px;
+  border-radius: 15px;
+  border: 0;
+  background: var(--border);
+  cursor: pointer;
+  transition: background 0.2s ease;
+  flex-shrink: 0;
+}
+
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s ease;
+}
+
+.switch.on {
+  background: var(--primary);
+}
+
+.switch.on::after {
+  transform: translateX(20px);
+}
+
+.avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes slide-up {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes shake {
+  20%,
+  60% {
+    transform: translateX(-8px);
+  }
+  40%,
+  80% {
+    transform: translateX(8px);
+  }
+}
+
+/* ─── Обменник WhiteBird ────────────────────────────────────────────── */
+
+.exchange-widget {
+  min-height: 520px;
+  overflow: hidden;
+}
+
+.center-row {
+  display: flex;
+  justify-content: center;
+  padding: 48px 0;
+}
+
+/* ─── Помощь ─────────────────────────────────────────────────────────── */
+
+.faq-item + .faq-item {
+  border-top: 1px solid var(--border);
+}
+
+.faq-answer {
+  margin: 0;
+  padding: 0 16px 14px;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.faq-chevron {
+  display: flex;
+  transition: transform 0.2s ease;
+}
+
+.faq-chevron.open {
+  transform: rotate(180deg);
+}
+
+/* ─── Маскот ─────────────────────────────────────────────────────────── */
+
+.mascot-stage {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+
+/* Мягкое синее свечение за маскотом — как подсветка экрана-лица. */
+.mascot-stage::before {
+  content: '';
+  position: absolute;
+  inset: 12% 18% 6%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(46, 102, 233, 0.35), transparent);
+  filter: blur(18px);
+}
+
+.mascot {
+  position: relative;
+  width: auto;
+  user-select: none;
+  pointer-events: none;
+  filter: drop-shadow(0 16px 24px rgba(0, 0, 0, 0.45));
+}
+
+.mascot.float {
+  animation: mascot-float 3.4s ease-in-out infinite;
+}
+
+.mascot.pop {
+  animation:
+    mascot-pop 0.6s cubic-bezier(0.2, 0.9, 0.3, 1.35) both,
+    mascot-float 3.4s ease-in-out 0.6s infinite;
+}
+
+.mascot.shake {
+  animation: mascot-shake 0.55s ease;
+}
+
+.promo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.promo .mascot-stage {
+  margin: -8px -8px -16px 0;
+}
+
+.celebrate {
+  overflow: hidden;
+}
+
+.confetti span {
+  position: absolute;
+  top: -20px;
+  width: 8px;
+  height: 14px;
+  border-radius: 2px;
+  opacity: 0;
+  animation: confetti-fall 2s ease-in forwards;
+}
+
+@keyframes mascot-float {
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes mascot-pop {
+  0% {
+    transform: scale(0.4) translateY(40px);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.06) translateY(-6px);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes mascot-shake {
+  20%,
+  60% {
+    transform: translateX(-10px) rotate(-4deg);
+  }
+  40%,
+  80% {
+    transform: translateX(10px) rotate(4deg);
+  }
+}
+
+@keyframes confetti-fall {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) rotate(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--drift), 90vh) rotate(var(--spin));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mascot,
+  .confetti span {
+    animation: none !important;
+  }
+}
+.additional-attempt-ack { display: flex; align-items: flex-start; gap: 12px; line-height: 1.5; cursor: pointer; }
+.additional-attempt-ack input { flex: 0 0 auto; width: 22px; height: 22px; margin: 2px 0 0; accent-color: var(--primary); }

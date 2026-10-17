@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN "card_reminder_sent_at" timestamp with time zone;

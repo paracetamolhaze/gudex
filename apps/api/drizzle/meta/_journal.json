@@ -1,0 +1,39 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1791818560818,
+      "tag": "0000_init",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791888481414,
+      "tag": "0001_wallet_features",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791906485315,
+      "tag": "0002_card_reminder",
+      "breakpoints": true
+    },
+    {"idx": 3, "version": "7", "when": 1792152000000, "tag": "0003_operations_unknown", "breakpoints": true},
+    {"idx": 4, "version": "7", "when": 1792152000001, "tag": "0004_auth_version", "breakpoints": true},
+    {"idx": 5, "version": "7", "when": 1792152000002, "tag": "0005_kyc_documents", "breakpoints": true},
+    {"idx": 6, "version": "7", "when": 1792152000003, "tag": "0006_upay_submissions", "breakpoints": true},
+    {"idx": 7, "version": "7", "when": 1792152000004, "tag": "0007_upay_receipt_aliases", "breakpoints": true},
+    {"idx": 8, "version": "7", "when": 1792152000005, "tag": "0008_live_mode_guards", "breakpoints": true},
+    {"idx": 9, "version": "7", "when": 1792152000006, "tag": "0009_custody_provenance", "breakpoints": true},
+    {"idx": 10, "version": "7", "when": 1792152000007, "tag": "0010_card_issue_sponsorships", "breakpoints": true},
+    {"idx": 11, "version": "7", "when": 1792152000008, "tag": "0011_card_billing_addresses", "breakpoints": true},
+    {"idx": 12, "version": "7", "when": 1792152000009, "tag": "0012_additional_issue_consent", "breakpoints": true},
+    {"idx": 13, "version": "7", "when": 1792152000010, "tag": "0013_deposit_invoices", "breakpoints": true},
+    {"idx": 14, "version": "7", "when": 1792152000011, "tag": "0014_card_operation_request_aliases", "breakpoints": true}
+  ]
+}

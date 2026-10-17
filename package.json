@@ -1,0 +1,21 @@
+{
+  "name": "gudex",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "api:dev": "npm run dev -w @gudex/api",
+    "api:worker": "npm run worker -w @gudex/api",
+    "api:test:unit": "npm run test:unit -w @gudex/api",
+    "api:migrate": "npm run db:migrate -w @gudex/api",
+    "api:test": "npm run test -w @gudex/api",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "miniapp:dev": "npm run dev -w @gudex/miniapp",
+    "miniapp:build": "npm run build -w @gudex/miniapp",
+    "vercel:build": "node scripts/build-vercel.mjs"
+  }
+}

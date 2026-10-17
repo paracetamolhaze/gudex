@@ -1,0 +1,16 @@
+﻿services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gudex
+      POSTGRES_PASSWORD: gudex
+      POSTGRES_DB: gudex
+    ports:
+      - "5442:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres-init:/docker-entrypoint-initdb.d
+
+volumes:
+  pgdata:

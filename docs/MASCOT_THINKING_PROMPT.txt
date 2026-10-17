@@ -1,0 +1,10 @@
+Tool: built-in image_gen (edit), transparent_background=true.
+Input: apps/miniapp/public/mascot/thinking.webp
+Selected asset: apps/miniapp/public/mascot/thinking-review-v2.png
+
+Use case: precise-object-edit.
+Asset type: transparent GUDEX Mini App mascot, existing image edit.
+Input image: the referenced local thinking.webp is the exact edit target.
+Primary request: change ONLY the face display, making TWO tidy, separate, fully visible glowing white eyebrows, one directly above each eye. Replace the single asymmetric questioning eyebrow with a balanced pair of gentle eyebrow arcs that give a calm, confident, attentive expression. Keep the existing cute eyes and gaze as close as possible; do not add a third eyebrow or merge a brow into an eye.
+Preserve exactly: the same cute 3D robot cat identity, white cat-eared hood and white face frame, glossy black face screen, black zip-up hoodie with the existing white G logo, white hands and legs, thinking pose with one hand touching the chin and the other arm crossed, full-body framing, vertical 2:3 composition, proportions, camera angle, materials, lighting and silhouette. Do not redesign the mascot, clothing or pose. No new objects or text. All pixels outside the face should remain as unchanged as possible.
+Background: genuine transparent alpha; preserve transparency and clean cutout edges, with no backdrop, checkerboard, extra ground or opaque shadow rectangle.

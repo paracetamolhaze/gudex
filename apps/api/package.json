@@ -1,0 +1,34 @@
+{
+  "name": "@gudex/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file=.env src/main.ts",
+    "start": "tsx --env-file=.env src/main.ts",
+    "worker": "tsx --env-file-if-exists=.env src/worker.ts",
+    "test:unit": "vitest run --config vitest.unit.config.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx --env-file=.env src/db/migrate-cli.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.3.0",
+    "@gudex/shared": "*",
+    "@vercel/functions": "^3.9.11",
+    "drizzle-orm": "^0.45.3",
+    "fastify": "^5.12.5",
+    "jose": "^6.2.12",
+    "pg": "^8.23.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "@types/pg": "^8.23.1",
+    "drizzle-kit": "^0.31.11",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  }
+}
