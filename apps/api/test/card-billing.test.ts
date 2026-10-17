@@ -62,6 +62,23 @@ async function fixture() {
 }
 
 describe('owned billing address creation and verified readback', () => {
+  it('collects and edits the manual address locally without a provider mutation or shared address-book lookup', async () => {
+    const f = await fixture();
+    const manual = new CardBillingService(ctx!.db, { ...config(), CARD_ISSUANCE_MODE: 'manual', UPAY_KYC_ENABLED: false,
+      adminTelegramIds: ['999'] }, f.client);
+    expect(await manual.save(f.userId, input)).toEqual({ required: true, status: 'ready', address: input });
+    expect(await manual.get(f.userId)).toEqual({ required: true, status: 'ready', address: input });
+    const changed = { ...input, address: 'Updated Street 20, Almaty' };
+    expect(await manual.save(f.userId, changed)).toEqual({ required: true, status: 'ready', address: changed });
+    expect(await manual.getSavedForAdmin(f.userId)).toEqual(changed);
+    expect(f.calls.every(call => call.method === 'GET' && call.path === '/common/countryAndRegion')).toBe(true);
+    expect(f.remote.rows).toEqual([]);
+    const [stored] = await ctx!.db.select().from(cardBillingAddresses);
+    expect(stored).toMatchObject({ status: 'prepared', partnerAddressId: null });
+    expect(JSON.stringify(stored)).not.toContain(changed.address);
+    expect(await manual.getSavedForAdmin(randomUUID())).toBeNull();
+  });
+
   it('checks the product restriction against the verified own billing code without changing the address or submitting anything', async () => {
     const f = await fixture();
     await f.service.save(f.userId, input);

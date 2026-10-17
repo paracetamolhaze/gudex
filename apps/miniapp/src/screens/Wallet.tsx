@@ -162,6 +162,7 @@ export function CardOperationProgress({ operationId, title, kind, issueRestricti
   const navigate = useNavigate();
   const operation = useOperation(operationId);
   const status = operation.data?.status;
+  const manualPending = kind === 'issue' && operation.data?.fulfillmentMode === 'manual' && status === 'pending';
   const restricted = kind === 'issue' && (operation.data?.issueRestriction ?? issueRestriction) === 'billing_phone_region_restricted';
   useEffect(() => {
     if (status === 'succeeded') haptic.success();
@@ -174,8 +175,8 @@ export function CardOperationProgress({ operationId, title, kind, issueRestricti
         : status === 'failed' ? <Notice tone="danger" text={t(`${kind}.failedText`)} />
           : <Surface className="stack card-operation-progress">
             <div className="card-operation-progress-copy" role="status" aria-live="polite">
-              <span className="body-medium">{t(restricted ? 'issue.restrictedTitle' : `${kind}.processingTitle`)}</span>
-              <span className="caption muted">{t(restricted ? 'errors.card_region_restricted' : `${kind}.${status === 'unknown' ? 'checkingText' : 'processingText'}`)}</span>
+              <span className="body-medium">{t(restricted ? 'issue.restrictedTitle' : manualPending ? 'issue.manualTitle' : `${kind}.processingTitle`)}</span>
+              <span className="caption muted">{t(restricted ? 'errors.card_region_restricted' : manualPending ? 'issue.manualText' : `${kind}.${status === 'unknown' ? 'checkingText' : 'processingText'}`)}</span>
             </div>
             {status === 'unknown' ? <Button variant="secondary" title={t('common.refresh')} loading={operation.isFetching} onClick={() => void operation.refetch()} /> : null}
           </Surface>}

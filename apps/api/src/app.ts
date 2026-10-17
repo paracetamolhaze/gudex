@@ -17,6 +17,7 @@ import { cardBillingRoutes } from './routes/card-billing';
 import { devRoutes } from './routes/dev';
 import { moneyRoutes } from './routes/money';
 import { opsRoutes } from './routes/ops';
+import { adminRoutes } from './routes/admin';
 import { telegramRoutes } from './routes/telegram';
 import { ActivityService } from './services/activity';
 import { AuthService } from './services/auth';
@@ -26,6 +27,8 @@ import { ExchangeService } from './services/exchange';
 import { KycService } from './services/kyc';
 import { NoticeService } from './services/notice';
 import { NotificationService } from './services/notify';
+import { AdminNotificationService } from './services/admin-notify';
+import { ManualAdminService } from './services/manual-admin';
 import { ReferralService } from './services/referrals';
 import { TransferService } from './services/transfers';
 import { WalletService } from './services/wallet';
@@ -65,6 +68,8 @@ export interface Services {
   cardBilling: CardBillingService;
   activity: ActivityService;
   notifications: NotificationService;
+  adminNotifications: AdminNotificationService;
+  manualAdmin: ManualAdminService;
   bot: BotService;
 }
 
@@ -73,11 +78,13 @@ export function createServices(deps: Deps): Services {
   const auth = new AuthService(db, config);
   const notices = new NoticeService(db);
   const wallet = new WalletService(db, deps.depositProvider, config.MIN_DEPOSIT);
+  const cards = new CardService(db, config, partner);
   return {
     auth,
     kyc: new KycService(db, partner, config.KYC_POLL_SECONDS, new DbKycDocumentStore(db, config.appSecret, config.KYC_DOCUMENT_TTL_SECONDS), {
       live: config.CARD_PARTNER === 'upay', enabled: config.CARD_PARTNER !== 'upay' || config.UPAY_KYC_ENABLED,
       requireSelfie: config.UPAY_KYC_REQUIRE_SELFIE,
+      manual: config.CARD_ISSUANCE_MODE === 'manual', adminTelegramIds: config.adminTelegramIds,
     }),
     wallet,
     depositInvoices: new DepositInvoiceService(db, config.appSecret, deps.depositInvoices,
@@ -87,10 +94,12 @@ export function createServices(deps: Deps): Services {
     referrals: new ReferralService(db, config),
     notices,
     exchange: new ExchangeService(config, wallet),
-    cards: new CardService(db, config, partner),
+    cards,
     cardBilling: deps.cardBilling ?? new CardBillingService(db, config, deps.upay),
     activity: new ActivityService(db),
     notifications: new NotificationService(db, deps.bot, config.publicUrl),
+    adminNotifications: new AdminNotificationService(db, deps.bot, config),
+    manualAdmin: new ManualAdminService(db, config, deps.upay, cards),
     bot: new BotService(deps.bot, config, auth, notices),
   };
 }
@@ -102,6 +111,7 @@ export function jobHandlers(services: Services): Record<string, JobHandler> {
     ...services.cards.handlers(),
     ...services.withdrawals.handlers(),
     ...services.notifications.handlers(),
+    ...services.adminNotifications.handlers(),
   };
 }
 
@@ -189,6 +199,7 @@ export async function buildApp(deps: Deps, services: Services, options: BuildOpt
       devTools: config.DEV_TOOLS,
       integration: {
         cardPartner: config.CARD_PARTNER,
+        issuanceMode: config.CARD_ISSUANCE_MODE,
         upayConfigured: Boolean(config.UPAY_LOGIN && config.UPAY_PASSWORD && config.UPAY_TOTP_SECRET),
         upayWritesEnabled: config.CARD_PARTNER === 'upay' && config.UPAY_WRITES_ENABLED,
         deposits: services.depositInvoices.ready ? 'live' : deps.depositProvider.mode,
@@ -196,8 +207,8 @@ export async function buildApp(deps: Deps, services: Services, options: BuildOpt
         depositInvoiceRead: services.depositInvoices.canReconcile,
         withdrawals: config.DEV_TOOLS ? 'demo' : 'disabled',
         capabilities: {
-          kyc: config.CARD_PARTNER !== 'upay' || config.UPAY_KYC_ENABLED,
-          issue: config.CARD_PARTNER !== 'upay' || config.UPAY_WRITES_ENABLED,
+          kyc: config.CARD_ISSUANCE_MODE === 'manual' || config.CARD_PARTNER !== 'upay' || config.UPAY_KYC_ENABLED,
+          issue: config.CARD_ISSUANCE_MODE === 'manual' || config.CARD_PARTNER !== 'upay' || config.UPAY_WRITES_ENABLED,
           topup: config.CARD_PARTNER !== 'upay' || config.UPAY_WRITES_ENABLED,
           freeze: config.CARD_PARTNER !== 'upay' || config.UPAY_WRITES_ENABLED,
         },
@@ -218,6 +229,7 @@ export async function buildApp(deps: Deps, services: Services, options: BuildOpt
   await app.register(moneyRoutes(deps, services), { prefix: '/v1' });
   await app.register(telegramRoutes(deps, services.bot), { prefix: '/v1' });
   await app.register(opsRoutes(deps, services, options.drainJobs), { prefix: '/v1/ops' });
+  await app.register(adminRoutes(services), { prefix: '/v1/admin' });
   if (deps.config.DEV_TOOLS) await app.register(devRoutes(deps, services), { prefix: '/v1/dev' });
 
   return app;

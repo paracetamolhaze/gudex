@@ -16,13 +16,15 @@ import {
 } from '@gudex/shared';
 import type { Config } from '../config';
 import type { Db, DbOrTx, Tx } from '../db/client';
-import { cardBillingAddresses, cardIssueRetryConsents, cardIssueSponsorships, cardOperationRequestAliases, cardOperations, cards, cardTransactions, kycProfiles, ledgerAccounts, upaySubmissionAliases, upaySubmissions, users } from '../db/schema';
+import { adminAuditLog, cardBillingAddresses, cardIssueRetryConsents, cardIssueSponsorships, cardOperationRequestAliases, cardOperations, cards, cardTransactions, kycProfiles, ledgerAccounts, upaySubmissionAliases, upaySubmissions, users } from '../db/schema';
 import { accounts, ensureAccount, getBalance, move, post } from '../ledger/ledger';
 import { AppError, isUniqueViolation } from '../lib/errors';
 import { PartnerBillingAddressRequiredError, PartnerCardRegionRestrictedError, PartnerError, PartnerPendingError, type CardPartner } from '../partner/types';
 import { provenNotDispatched, UpayNotDispatchedError } from '../partner/upay/financial-partner';
 import { enqueue, type JobContext, type JobHandler, PermanentJobError, RetryLater } from '../queue/queue';
 import { notify } from './notify';
+import { notifyAdmins } from './admin-notify';
+import { CardBillingService } from './card-billing';
 import { rewardReferrer } from './referrals';
 import { ADDITIONAL_ISSUE_ORIGINAL_ID, ADDITIONAL_ISSUE_TELEGRAM_ID, ADDITIONAL_ISSUE_TERMS, type AdditionalIssueSnapshot, signAdditionalIssueQuote, verifyAdditionalIssueQuote } from './additional-issue-quote';
 
@@ -44,6 +46,7 @@ function operationDto(op: OperationRow): OperationDto {
     id: op.id,
     type: op.type,
     status: op.status,
+    fulfillmentMode: op.fulfillmentMode === 'manual' ? 'manual' : 'automatic',
     cardId: op.cardId,
     asset,
     amount: sponsored ? '0' : asset && op.amount !== null ? fromMinor(op.amount, asset) : null,
@@ -230,6 +233,7 @@ export class CardService {
   }
 
   private async additionalAttemptContext(db: DbOrTx, userId: string, lock = false) {
+    if (this.config.CARD_ISSUANCE_MODE === 'manual') return null;
     if (this.config.CARD_PARTNER !== 'upay' || this.config.DEV_TOOLS || this.issueFeeUsd <= 0n || this.issueFeeUsd > SPONSOR_BUDGET_USD) return null;
     const userQuery = db.select().from(users).where(eq(users.id, userId));
     const [user] = await (lock ? userQuery.for('update') : userQuery);
@@ -377,15 +381,19 @@ export class CardService {
   async issue(userId: string, input: IssueInput): Promise<{ card: CardDto; operation: OperationDto }> {
     const existing = await this.findByKey(userId, input.idempotencyKey);
     if (existing) return { card: await this.get(userId, existing.cardId), operation: operationDto(existing) };
-    this.partner.assertWriteReady?.();
+    const manual = this.config.CARD_ISSUANCE_MODE === 'manual';
+    if (!manual) this.partner.assertWriteReady?.();
 
     const [kyc] = await this.db.select().from(kycProfiles).where(eq(kycProfiles.userId, userId));
     if (kyc?.status !== 'approved') throw new AppError('kyc_required', 'Identity verification required');
     if (this.config.CARD_PARTNER === 'upay' && kyc.partnerProvider !== 'upay') throw new AppError('kyc_required', 'Complete identity verification with UPay before issuing a live card');
+    if (manual && this.config.CARD_PARTNER === 'upay' && !await new CardBillingService(this.db, this.config).getSavedForAdmin(userId)) {
+      throw new AppError('billing_address_required', 'Complete your billing address before requesting a card');
+    }
 
     // Native billing requirements are independent of KYC/needParams. Validate
     // the live form and its owned address before reserving any customer funds.
-    if (this.partner.validateIssue) {
+    if (!manual && this.partner.validateIssue) {
       if (!kyc.partnerCustomerId) throw new AppError('kyc_required', 'Verified customer binding is required');
       try { await this.partner.validateIssue({ partnerCustomerId: kyc.partnerCustomerId, maxFeeUsd: this.issueFeeUsd }); }
       catch (error) {
@@ -455,6 +463,7 @@ export class CardService {
             cardId: card!.id,
             type: 'issue',
             partnerProvider: this.config.CARD_PARTNER,
+            fulfillmentMode: manual ? 'manual' : 'automatic',
             sponsorshipId: sponsored ? grant!.id : null,
             idempotencyKey: input.idempotencyKey,
             asset: input.asset,
@@ -471,7 +480,8 @@ export class CardService {
           const [reserved] = await tx.update(cardIssueSponsorships).set({ operationId: op!.id, updatedAt: new Date() }).where(and(eq(cardIssueSponsorships.id, grant!.id), isNull(cardIssueSponsorships.operationId), isNull(cardIssueSponsorships.consumedAt))).returning({ id: cardIssueSponsorships.id });
           if (!reserved) throw new AppError('provider_unavailable', 'Broker issuance coverage is already reserved');
         }
-        await enqueue(tx, 'card.issue', { operationId: op!.id });
+        if (manual) await notifyAdmins(tx, this.config, { userId, eventKey: `issuance:${op!.id}`, stage: 'issuance' });
+        else await enqueue(tx, 'card.issue', { operationId: op!.id });
         return op!.id;
       });
       const op = await this.getOperation(userId, opId);
@@ -690,6 +700,7 @@ export class CardService {
       const [op] = await tx.select().from(cardOperations).where(eq(cardOperations.id, operationId)).for('update');
       if (!op) throw new PermanentJobError(`Operation ${operationId} not found`);
       if (TERMINAL.includes(op.status)) return null;
+      if (op.type === 'issue' && op.fulfillmentMode === 'manual') return null;
       if (op.sponsorshipId) await tx.execute(sql`select set_config('gudex.sponsorship_v1', 'true', true), set_config('gudex.sponsorship_v2', 'true', true)`);
       if (op.partnerProvider !== this.config.CARD_PARTNER) {
         await tx.update(cardOperations).set({ status: 'unknown', error: 'Operation provider differs from the active integration; manual reconciliation required', updatedAt: new Date() }).where(eq(cardOperations.id, op.id));
@@ -715,6 +726,20 @@ export class CardService {
   }
 
   private async runIssue(operationId: string, context?: JobContext): Promise<void> {
+    const [intent] = await this.db.select({ mode: cardOperations.fulfillmentMode }).from(cardOperations).where(eq(cardOperations.id, operationId));
+    if (intent?.mode === 'manual') return;
+    if (this.config.CARD_ISSUANCE_MODE === 'manual') {
+      await this.db.transaction(async tx => {
+        const [op] = await tx.select().from(cardOperations).where(eq(cardOperations.id, operationId)).for('update');
+        if (!op || op.type !== 'issue' || op.fulfillmentMode !== 'automatic' || op.status !== 'pending' || op.attempts !== 0) return;
+        const [journal] = await tx.select({ reference: upaySubmissions.reference }).from(upaySubmissions).where(eq(upaySubmissions.reference, op.id));
+        const [card] = await tx.select().from(cards).where(eq(cards.id, op.cardId)).for('update');
+        if (journal || !card || card.userId !== op.userId || card.status !== 'pending' || card.partnerCardId) return;
+        await tx.update(cardOperations).set({ fulfillmentMode: 'manual', updatedAt: new Date() }).where(eq(cardOperations.id, op.id));
+        await notifyAdmins(tx, this.config, { userId: op.userId, eventKey: `issuance:${op.id}`, stage: 'issuance' });
+      });
+      return;
+    }
     const started = await this.startOperation(operationId);
     if (!started) return;
     const { op } = started;
@@ -758,9 +783,57 @@ export class CardService {
     }
   }
 
-  private async completeIssue(operationId: string, issued: Awaited<ReturnType<CardPartner['issueCard']>>): Promise<void> {
-    const settlement = await this.partner.getIssueSettlement?.(operationId);
+  async completeManualIssue(actorUserId: string, userId: string, operationId: string,
+    issued: Awaited<ReturnType<CardPartner['issueCard']>>, receipt: { grossUsd: bigint; orderNo: string;
+      partnerCustomerId: string; submissionId: string; productId: string; operationUpdatedAt: string; receiptRecordId?: string }): Promise<void> {
+    const [actor] = await this.db.select({ telegramId: users.telegramId }).from(users).where(eq(users.id, actorUserId));
+    if (!actor || !this.config.adminTelegramIds.includes(actor.telegramId.toString())) throw new AppError('forbidden', 'Administrator access required');
+    if (this.config.CARD_ISSUANCE_MODE !== 'manual') throw new AppError('validation', 'Manual issuance is disabled');
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(receipt.orderNo) || !/^[A-Za-z0-9_-]{1,128}$/.test(issued.partnerCardId)
+      || receipt.receiptRecordId !== undefined && !/^[A-Za-z0-9_-]{1,128}$/.test(receipt.receiptRecordId)
+      || typeof receipt.grossUsd !== 'bigint' || receipt.grossUsd < 0n) throw new AppError('validation', 'Invalid issuance receipt');
+    await this.completeIssue(operationId, issued, { actorUserId, userId, ...receipt });
+  }
+
+  private async completeIssue(operationId: string, issued: Awaited<ReturnType<CardPartner['issueCard']>>,
+    manual?: { actorUserId: string; userId: string; grossUsd: bigint; orderNo: string;
+      partnerCustomerId: string; submissionId: string; productId: string; operationUpdatedAt: string; receiptRecordId?: string }): Promise<void> {
+    const settlement = manual ?? await this.partner.getIssueSettlement?.(operationId);
     await this.finish(operationId, async (tx, op) => {
+      if (manual) {
+        const [profile] = await tx.select().from(kycProfiles).where(eq(kycProfiles.userId, manual.userId)).for('update');
+        if (op.userId !== manual.userId || op.type !== 'issue' || op.fulfillmentMode !== 'manual' || op.status !== 'pending' || op.attempts !== 0
+          || op.partnerProvider !== this.config.CARD_PARTNER || profile?.status !== 'approved' || profile.partnerProvider !== this.config.CARD_PARTNER
+          || !profile.partnerCustomerId || profile.partnerCustomerId !== manual.partnerCustomerId || profile.submissionId !== manual.submissionId
+          || this.config.UPAY_PRODUCT_ID !== manual.productId || op.updatedAt.toISOString() !== manual.operationUpdatedAt) {
+          throw new AppError('validation', 'Only an approved client with an undispatched manual request can be linked');
+        }
+        await tx.insert(adminAuditLog).values({ actorUserId: manual.actorUserId, targetUserId: manual.userId,
+          action: 'card.linked', reference: manual.orderNo, metadata: { operationId, partnerCardId: issued.partnerCardId,
+            customerNo: profile.partnerCustomerId, grossUsd: manual.grossUsd.toString() } });
+        // Share the same order/record/card namespace as automatic fulfilment.
+        // No receipt may settle both a manual and an automatic operation.
+        const evidence = { operatorBound: true, customerNo: manual.partnerCustomerId, agentCardId: manual.productId,
+          orderNo: manual.orderNo, ...(manual.receiptRecordId ? { receiptRecordId: manual.receiptRecordId } : {}),
+          last4: issued.last4, expiryMonth: issued.expiryMonth, expiryYear: issued.expiryYear,
+          actualIssueCostUsdt: fromMinor(manual.grossUsd, 'USD'),
+          maxFeeBudgetUsdt: fromMinor(convertMinor(op.fee!, op.asset as WalletAsset, 'USD'), 'USD') };
+        const conflicts = await tx.select({ reference: upaySubmissions.reference }).from(upaySubmissions)
+          .where(and(eq(upaySubmissions.kind, 'issue'), ne(upaySubmissions.reference, op.id),
+            sql`(${upaySubmissions.partnerReceiptId} = ${manual.orderNo} or ${upaySubmissions.partnerCardId} = ${issued.partnerCardId}
+              ${manual.receiptRecordId ? sql`or ${upaySubmissions.partnerReceiptId} = ${manual.receiptRecordId}` : sql``})`)).for('update');
+        if (conflicts.length) throw new AppError('validation', 'The issuance receipt already belongs to another operation');
+        await tx.insert(upaySubmissions).values({ reference: op.id, kind: 'issue', state: 'confirmed',
+          requestHash: createHash('sha256').update(JSON.stringify({ operationId, ...evidence })).digest('hex'),
+          partnerReceiptId: manual.orderNo, partnerCardId: issued.partnerCardId, evidence });
+        for (const alias of [`order:${manual.orderNo}`, `card:${issued.partnerCardId}`,
+          ...(manual.receiptRecordId ? [`record:${manual.receiptRecordId}`] : [])].sort()) {
+          await tx.insert(upaySubmissionAliases).values({ kind: 'issue', alias, reference: op.id }).onConflictDoNothing();
+          const [owner] = await tx.select({ reference: upaySubmissionAliases.reference }).from(upaySubmissionAliases)
+            .where(and(eq(upaySubmissionAliases.kind, 'issue'), eq(upaySubmissionAliases.alias, alias)));
+          if (owner?.reference !== op.id) throw new AppError('validation', 'The issuance receipt or card already belongs to another operation');
+        }
+      } else if (op.fulfillmentMode === 'manual') throw new AppError('validation', 'Manual request requires administrator verification');
       const sponsor = op.sponsorshipId ? await this.requireSponsorship(tx, op) : null;
       if (sponsor && (!settlement || typeof settlement.grossUsd !== 'bigint')) throw new PartnerError('A confirmed issuance receipt is required for broker coverage', true);
       const asset = op.asset as WalletAsset;
@@ -923,6 +996,7 @@ export class CardService {
   async reconcileUnknown(operationId: string): Promise<OperationDto> {
     const [op] = await this.db.select().from(cardOperations).where(eq(cardOperations.id, operationId));
     if (!op) throw new AppError('not_found', 'Operation not found');
+    if (op.fulfillmentMode === 'manual') return this.getOperation(op.userId, op.id);
     if (!TERMINAL.includes(op.status) && op.partnerProvider !== this.config.CARD_PARTNER) {
       await this.markUnknown(op.id);
       return this.getOperation(op.userId, op.id);

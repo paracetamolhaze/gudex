@@ -34,6 +34,7 @@
     {"idx": 11, "version": "7", "when": 1792152000008, "tag": "0011_card_billing_addresses", "breakpoints": true},
     {"idx": 12, "version": "7", "when": 1792152000009, "tag": "0012_additional_issue_consent", "breakpoints": true},
     {"idx": 13, "version": "7", "when": 1792152000010, "tag": "0013_deposit_invoices", "breakpoints": true},
-    {"idx": 14, "version": "7", "when": 1792152000011, "tag": "0014_card_operation_request_aliases", "breakpoints": true}
+    {"idx": 14, "version": "7", "when": 1792152000011, "tag": "0014_card_operation_request_aliases", "breakpoints": true},
+    {"idx": 15, "version": "7", "when": 1792152000012, "tag": "0015_manual_card_fulfillment", "breakpoints": true}
   ]
 }

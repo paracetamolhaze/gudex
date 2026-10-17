@@ -35,6 +35,7 @@ const schema = z
     // Вход без Telegram (POST /v1/auth/dev) — только для локальной разработки, на Vercel запрещён.
     DEV_LOGIN: flag('false'),
     CARD_PARTNER: z.enum(['mock', 'upay']).default('mock'),
+    CARD_ISSUANCE_MODE: z.enum(['automatic', 'manual']).default('automatic'),
     UPAY_BASE_URL: z.literal('https://broker-admin.upay.plus/api/v1').default('https://broker-admin.upay.plus/api/v1'),
     UPAY_LOGIN: optional(),
     UPAY_PASSWORD: optional(),
@@ -126,12 +127,19 @@ const username = (value: string | undefined) => value?.replace(/^@/, '').trim() 
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = schema.parse(env);
+  const adminTelegramIds = [...new Set((parsed.ADMIN_TELEGRAM_IDS ?? '').split(',').map(id => id.trim()).filter(Boolean))];
+  if (adminTelegramIds.some(id => !/^[1-9]\d{0,18}$/.test(id) || BigInt(id) > 9223372036854775807n)) {
+    throw new Error('ADMIN_TELEGRAM_IDS must contain numeric Telegram user IDs');
+  }
   if (parsed.OPS_API_TOKEN && parsed.OPS_API_TOKEN.length < 32) throw new Error('OPS_API_TOKEN must contain at least 32 characters');
   if (parsed.CARD_PARTNER === 'upay' && parsed.DEV_TOOLS) throw new Error('Disable DEV_TOOLS before selecting the live UPay partner');
   if (parsed.CARD_PARTNER === 'upay' && !(parsed.UPAY_LOGIN && parsed.UPAY_PASSWORD && parsed.UPAY_TOTP_SECRET)) {
     throw new Error('UPay requires UPAY_LOGIN, UPAY_PASSWORD and UPAY_TOTP_SECRET');
   }
   if (parsed.UPAY_WRITES_ENABLED && !/^\d{6}$/.test(parsed.UPAY_PAYMENT_PASSWORD ?? '')) throw new Error('UPAY_WRITES_ENABLED requires a six digit UPAY_PAYMENT_PASSWORD');
+  if (parsed.CARD_ISSUANCE_MODE === 'manual' && !(parsed.ADMIN_TELEGRAM_IDS ?? '').split(',').some(id => /^[1-9]\d{0,18}$/.test(id.trim()))) {
+    throw new Error('Manual issuance requires ADMIN_TELEGRAM_IDS');
+  }
   const publicUrl =
     parsed.PUBLIC_URL ?? (parsed.VERCEL_PROJECT_PRODUCTION_URL ? `https://${parsed.VERCEL_PROJECT_PRODUCTION_URL}` : null);
   return {
@@ -141,7 +149,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     devLogin: parsed.DEV_LOGIN && !parsed.VERCEL,
     withdrawFees: perNetwork('WITHDRAW_FEES', parsed.WITHDRAW_FEES),
     withdrawMin: perNetwork('WITHDRAW_MIN', parsed.WITHDRAW_MIN),
-    adminTelegramIds: (parsed.ADMIN_TELEGRAM_IDS ?? '').split(',').map((id) => id.trim()).filter(Boolean),
+    adminTelegramIds,
     supportUsername: username(parsed.SUPPORT_USERNAME),
     channelUsername: username(parsed.CHANNEL_USERNAME),
   };

@@ -385,6 +385,7 @@ export const cardOperations = pgTable(
       .references(() => cards.id),
     type: operationType('type').notNull(),
     partnerProvider: text('partner_provider').notNull().default('mock'),
+    fulfillmentMode: text('fulfillment_mode').notNull().default('automatic'),
     sponsorshipId: uuid('sponsorship_id').references((): AnyPgColumn => cardIssueSponsorships.id),
     status: operationStatus('status').notNull().default('pending'),
     idempotencyKey: text('idempotency_key').notNull(),
@@ -399,6 +400,8 @@ export const cardOperations = pgTable(
   },
   (t) => [
     uniqueIndex('card_operations_idempotency').on(t.userId, t.idempotencyKey),
+    check('card_operations_fulfillment_mode', sql`${t.fulfillmentMode} in ('automatic', 'manual')`),
+    check('card_operations_manual_dispatch', sql`${t.fulfillmentMode} <> 'manual' or (${t.type} = 'issue' and ${t.attempts} = 0 and ${t.status} in ('pending', 'succeeded', 'failed'))`),
     index('card_operations_card_idx').on(t.cardId),
     check('card_operations_sponsorship_fields', sql`${t.sponsorshipId} is null or (${t.type} = 'issue' and ${t.partnerProvider} = 'upay' and ${t.asset} is not null and ${t.asset} = 'USDT' and ${t.amount} is not null and ${t.amount} = 10000000 and ${t.fee} is not null and ${t.fee} = ${t.amount})`),
   ],
@@ -472,6 +475,27 @@ export const cardTransactions = pgTable(
 );
 
 // ─── Очередь задач ───────────────────────────────────────────────────────
+
+export const adminNotifications = pgTable('admin_notifications', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  eventKey: text('event_key').notNull(),
+  recipientTelegramId: bigint('recipient_telegram_id', { mode: 'bigint' }).notNull(),
+  userId: uuid('user_id').notNull().references(() => users.id),
+  stage: text('stage').notNull(),
+  createdAt: createdAt(),
+  sentAt: timestamp('sent_at', { withTimezone: true }),
+}, t => [uniqueIndex('admin_notifications_event_recipient').on(t.eventKey, t.recipientTelegramId),
+  check('admin_notifications_stage', sql`${t.stage} in ('verification', 'issuance')`)]);
+
+export const adminAuditLog = pgTable('admin_audit_log', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  actorUserId: uuid('actor_user_id').notNull().references(() => users.id),
+  targetUserId: uuid('target_user_id').notNull().references(() => users.id),
+  action: text('action').notNull(),
+  reference: text('reference').notNull(),
+  metadata: jsonb('metadata'),
+  createdAt: createdAt(),
+}, t => [uniqueIndex('admin_audit_action_reference').on(t.action, t.reference), index('admin_audit_target_idx').on(t.targetUserId)]);
 
 export const jobs = pgTable(
   'jobs',

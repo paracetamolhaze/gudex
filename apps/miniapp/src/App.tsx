@@ -8,6 +8,8 @@ import { useSession } from './lib/session';
 import { CardScreen } from './screens/Card';
 import { CardBilling } from './screens/CardBilling';
 import { CardAdditionalAttempt } from './screens/CardAdditionalAttempt';
+import { Admin } from './screens/Admin';
+import { adminQueryValid } from './lib/admin';
 import { BootError, Lock, Onboarding, Outside } from './screens/Entry';
 import { Home } from './screens/Home';
 import { Buy } from './screens/Buy';
@@ -40,6 +42,8 @@ function MainApp() {
         <Route path="/card" element={<CardScreen />} />
         <Route path="/history" element={<History />} />
         <Route path="/profile" element={<Profile />} />
+        <Route path="/admin" element={<Admin />} />
+        <Route path="/admin/clients/:query" element={<Admin />} />
         <Route path="/deposit" element={<Deposit />} />
         <Route path="/kyc" element={<Kyc />} />
         <Route path="/card/issue" element={<CardIssue />} />
@@ -61,6 +65,12 @@ function MainApp() {
 }
 
 // Маршрутизация в памяти: в Mini App нет адресной строки, а hash занят параметрами запуска Telegram.
+// Only the explicit admin entry path is accepted from the address bar; Telegram hash is untouched.
+const adminClientPath = window.location.pathname.match(/^\/admin\/clients\/([A-Za-z0-9-]+)\/?$/)?.[1];
+const initialEntries = window.location.pathname === '/admin' || window.location.pathname === '/admin/'
+  ? ['/profile', '/admin'] : adminClientPath && adminQueryValid(adminClientPath)
+    ? ['/profile', `/admin/clients/${adminClientPath}`] : ['/'];
+
 export function App() {
   const { stage } = useSession();
   let screen: ReactNode;
@@ -79,5 +89,5 @@ export function App() {
       screen = <MainApp />; break;
   }
   // Preserve only in-memory navigation through relock; private screens still unmount.
-  return <MemoryRouter>{screen}</MemoryRouter>;
+  return <MemoryRouter initialEntries={initialEntries}>{screen}</MemoryRouter>;
 }

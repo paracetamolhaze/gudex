@@ -112,17 +112,21 @@ export class CardBillingService {
     if (!this.live) return { required: false, status: 'missing', address: null };
     const profile = await this.profile(userId);
     if (!profile) return { required: true, status: 'missing', address: null };
-    const required = await this.required(profile);
+    const required = this.config.CARD_ISSUANCE_MODE === 'manual' ? true : await this.required(profile);
     const [row] = await this.db.select().from(cardBillingAddresses).where(eq(cardBillingAddresses.userId, userId));
     if (!row) return { required, status: 'missing', address: null };
     if (!this.matches(profile, row)) return { required, status: 'pending', address: null };
+    if (this.config.CARD_ISSUANCE_MODE === 'manual' && ['prepared', 'ready'].includes(row.status)) {
+      return { required, status: 'ready', address: this.open(row).input };
+    }
     if (row.status === 'rejected') return { required, status: 'missing', address: this.open(row).input };
     const ready = await this.resolve(row);
     return { required, status: ready ? 'ready' : 'pending', address: this.open(row).input };
   }
   async save(userId: string, value: CardBillingAddressInput): Promise<CardBillingAddressDto> {
     const api = this.api();
-    if (!this.config.UPAY_KYC_ENABLED) throw new AppError('provider_unavailable', 'UPay billing writes are not enabled');
+    const manual = this.config.CARD_ISSUANCE_MODE === 'manual';
+    if (!manual && !this.config.UPAY_KYC_ENABLED) throw new AppError('provider_unavailable', 'UPay billing writes are not enabled');
     const input = parse(cardBillingInputSchema, value);
     if (!(await this.countries(userId)).some(country => country.id === input.countryId)) throw new AppError('validation', 'Select a supported billing country');
     const row = await this.db.transaction(async tx => {
@@ -134,7 +138,7 @@ export class CardBillingService {
         // A later explicit edit creates a fresh private book entry; it never
         // edits or deletes the previously verified provider address.
         if (existing.customerNo === saved.owner.customerNo && (existing.status === 'rejected'
-          || existing.status === 'ready' && existing.requestHash !== this.hash(saved))) {
+          || (existing.status === 'ready' || manual && existing.status === 'prepared') && existing.requestHash !== this.hash(saved))) {
           const marker = `GDXB${randomBytes(8).toString('hex')}`;
           const [replacement] = await tx.update(cardBillingAddresses).set({ customerNo: saved.owner.customerNo, marker,
             requestHash: this.hash(saved), ...this.seal(userId, saved.owner.customerNo, marker, saved), status: 'prepared', partnerAddressId: null, updatedAt: new Date() })
@@ -151,6 +155,10 @@ export class CardBillingService {
         requestHash: this.hash(saved), ...this.seal(userId, saved.owner.customerNo, marker, saved) }).returning();
       return created!;
     });
+    if (manual) {
+      if (!['prepared', 'ready'].includes(row.status)) throw new AppError('validation', 'An earlier billing submission requires reconciliation');
+      return { required: true, status: 'ready', address: input };
+    }
     if (await this.resolve(row)) return { required: await this.requiredForUser(userId), status: 'ready', address: input };
     const claimed = await this.db.transaction(async tx => {
       const profile = await this.profile(userId, tx, true);
@@ -235,5 +243,13 @@ export class CardBillingService {
     if (profiles.length !== 1 || profiles[0]!.partnerProvider !== 'upay' || profiles[0]!.status !== 'approved') return null;
     const [row] = await this.db.select().from(cardBillingAddresses).where(and(eq(cardBillingAddresses.userId, profiles[0]!.userId), eq(cardBillingAddresses.customerNo, customerNo)));
     return row ? this.resolve(row, true, restrictionPolicy) : null;
+  }
+
+  // The admin reviews only the address explicitly supplied by this customer;
+  // no remote shared address-book lookup or write is needed for manual issuance.
+  async getSavedForAdmin(userId: string): Promise<CardBillingAddressInput | null> {
+    const profile = await this.profile(userId);
+    const [row] = await this.db.select().from(cardBillingAddresses).where(eq(cardBillingAddresses.userId, userId));
+    return profile && row && ['prepared', 'ready'].includes(row.status) && this.matches(profile, row) ? this.open(row).input : null;
   }
 }

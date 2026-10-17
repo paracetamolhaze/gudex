@@ -10,6 +10,7 @@ export type Locale = 'ru' | 'en';
 export type ErrorCode =
   | 'validation'
   | 'unauthorized'
+  | 'forbidden'
   | 'not_found'
   | 'telegram_auth_failed'
   | 'pin_required'
@@ -58,7 +59,7 @@ export interface KycDto {
   firstName: string | null;
   lastName: string | null;
   rejectionReason: string | null;
-  submissionState: 'none' | 'queued' | 'submitted' | 'unknown';
+  submissionState: 'none' | 'queued' | 'submitted' | 'unknown' | 'manual_review' | 'manual_verified';
 }
 
 export interface KycDocumentDto {
@@ -168,6 +169,7 @@ export interface OperationDto {
   id: string;
   type: OperationType;
   status: OperationStatus;
+  fulfillmentMode?: 'automatic' | 'manual';
   cardId: string;
   asset: WalletAsset | null;
   amount: string | null;
@@ -344,6 +346,7 @@ export interface AppConfigDto {
   devTools: boolean;
   integration: {
     cardPartner: 'mock' | 'upay';
+    issuanceMode?: 'automatic' | 'manual';
     upayConfigured: boolean;
     upayWritesEnabled: boolean;
     deposits: 'demo' | 'disabled' | 'live';

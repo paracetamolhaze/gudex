@@ -4,6 +4,7 @@ import type { ZodType } from 'zod';
 const STATUS: Record<ErrorCode, number> = {
   validation: 400,
   unauthorized: 401,
+  forbidden: 403,
   not_found: 404,
   telegram_auth_failed: 401,
   pin_required: 403,

@@ -40,6 +40,8 @@ interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: object;
   headers?: Record<string, string>;
+  cache?: 'no-store';
+  signal?: AbortSignal;
 }
 
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
@@ -52,7 +54,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 
   let res: Response;
   try {
-    res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+    res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined, cache: options.cache, signal: options.signal });
   } catch {
     throw new ApiError('network', 'Network error', 0);
   }

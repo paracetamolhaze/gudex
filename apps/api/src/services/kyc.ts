@@ -9,12 +9,13 @@ import { PartnerError, type CardPartner, type PartnerCustomerInput } from '../pa
 import { assertNewCustomerCanUseCard } from '../partner/upay/native-validation';
 import { enqueue, type JobContext, type JobHandler, RetryLater } from '../queue/queue';
 import { notify } from './notify';
+import { notifyAdmins } from './admin-notify';
 
 export interface KycInput {
   firstName: string; lastName: string; email: string; birthDate: string; citizenship: string;
   phone?: string; globalCode?: string; documentType?: 'id_card' | 'passport'; documentCountry?: string; documentIds?: KycDocumentIds;
 }
-export interface KycOptions { live: boolean; enabled: boolean; requireSelfie: boolean; }
+export interface KycOptions { live: boolean; enabled: boolean; requireSelfie: boolean; manual?: boolean; adminTelegramIds?: string[]; }
 
 async function jobStillActive(context?: JobContext): Promise<boolean> {
   if (!context) return true;
@@ -33,9 +34,9 @@ export class KycService {
   ) {}
 
   async requirements(): Promise<KycRequirementsDto> {
-    const remote = this.options.live && this.options.enabled ? await this.partner.getKycRequirements?.() : undefined;
-    return { live: this.options.live, enabled: !this.options.live || this.options.enabled,
-      documentsRequired: this.options.live, selfieRequired: this.options.live && (this.options.requireSelfie || Boolean(remote?.selfieRequired)),
+    const remote = this.options.live && this.options.enabled && !this.options.manual ? await this.partner.getKycRequirements?.() : undefined;
+    return { live: this.options.live, enabled: Boolean(this.options.manual) || !this.options.live || this.options.enabled,
+      documentsRequired: this.options.live || Boolean(this.options.manual), selfieRequired: (this.options.live || Boolean(this.options.manual)) && (this.options.requireSelfie || Boolean(remote?.selfieRequired)),
       maxUploadBytes: MAX_KYC_UPLOAD_BYTES, documentTypes: remote?.documentTypes ?? ['id_card', 'passport'] };
   }
 
@@ -50,6 +51,7 @@ export class KycService {
   private get provider(): 'upay' | 'mock' { return this.options.live ? 'upay' : 'mock'; }
 
   private assertReady(): void {
+    if (this.options.manual) return;
     if (this.options.live && !this.options.enabled) throw new AppError('provider_unavailable', 'UPay KYC submission is disabled');
     try { this.partner.assertKycReady?.(); }
     catch (error) { if (error instanceof PartnerError) throw new AppError('provider_unavailable', error.message); throw error; }
@@ -74,7 +76,7 @@ export class KycService {
 
   async submit(userId: string, input: KycInput): Promise<KycDto> {
     this.assertReady();
-    if (this.options.live) {
+    if (this.options.live || this.options.manual) {
       if (!input.phone || !input.globalCode || !input.documentCountry || !input.documentType || !input.documentIds?.front || !this.documents) {
         throw new AppError('validation', 'Phone and identity document photos are required');
       }
@@ -94,7 +96,7 @@ export class KycService {
       if (sameProvider && row && ['pending', 'approved', 'unknown'].includes(row.status)) {
         throw new AppError('kyc_already_submitted', 'KYC is already submitted or requires reconciliation');
       }
-      if (this.options.live) {
+      if (this.options.live || this.options.manual) {
         for (const [kind, id] of Object.entries(input.documentIds!)) await this.documents!.getOwned(userId, id, kind as 'front' | 'back' | 'selfie', tx);
       }
       const submissionId = randomUUID();
@@ -104,10 +106,14 @@ export class KycService {
         email: input.email.trim().toLowerCase(), birthDate: input.birthDate, citizenship: input.citizenship.toUpperCase(),
         phone: input.phone ?? null, globalCode: input.globalCode ?? null, documentType: input.documentType ?? null,
         documentCountry: input.documentCountry?.toUpperCase() ?? null, documentIds: input.documentIds ?? null,
-        submissionId, submissionState: 'queued', documentsSubmittedAt: null, rejectionReason: null, submittedAt: new Date(), updatedAt: new Date(),
+        submissionId, submissionState: this.options.manual ? 'manual_review' : 'queued', documentsSubmittedAt: null, rejectionReason: null, submittedAt: new Date(), updatedAt: new Date(),
       };
       await tx.insert(kycProfiles).values({ userId, ...values }).onConflictDoUpdate({ target: kycProfiles.userId, set: values });
-      await enqueue(tx, 'kyc.submit', { userId, submissionId }, { dedupeKey: `kyc.submit:${submissionId}` });
+      if (this.options.manual) {
+        await notifyAdmins(tx, { adminTelegramIds: this.options.adminTelegramIds ?? [] }, { userId, eventKey: `verification:${submissionId}`, stage: 'verification' });
+      } else {
+        await enqueue(tx, 'kyc.submit', { userId, submissionId }, { dedupeKey: `kyc.submit:${submissionId}` });
+      }
     });
     return this.get(userId);
   }
@@ -126,6 +132,7 @@ export class KycService {
   // An authenticated manual refresh may only read the existing remote customer status.
   async recheck(userId: string): Promise<KycDto> {
     const [profile] = await this.db.select().from(kycProfiles).where(eq(kycProfiles.userId, userId));
+    if (profile?.submissionState === 'manual_review') return this.get(userId);
     if (profile?.status === 'unknown' && profile.partnerProvider === this.provider && this.partner.reconcileKycSubmission) {
       try {
         const receipt = await this.partner.reconcileKycSubmission(this.partnerInput(profile, userId));
@@ -159,7 +166,12 @@ export class KycService {
   }
 
   private async sendToPartner(userId: string, submissionId?: string, context?: JobContext): Promise<void> {
+    if (this.options.manual) {
+      await this.stopQueuedAutomaticSubmission(userId, submissionId, context);
+      return;
+    }
     const [profile] = await this.db.select().from(kycProfiles).where(eq(kycProfiles.userId, userId));
+    if (profile?.submissionState === 'manual_review') return;
     if (!profile || profile.status !== 'pending' || profile.partnerProvider !== this.provider || (submissionId && profile.submissionId !== submissionId)) return;
     if (profile.submissionState === 'submitted' && profile.partnerCustomerId) {
       await this.db.transaction(async tx => {
@@ -192,6 +204,22 @@ export class KycService {
     }
   }
 
+  private async stopQueuedAutomaticSubmission(userId: string, submissionId?: string, context?: JobContext): Promise<void> {
+    await this.db.transaction(async tx => {
+      const [user] = await tx.select({ id: users.id }).from(users).where(eq(users.id, userId)).for('update');
+      if (!user) return;
+      const [profile] = await tx.select().from(kycProfiles).where(eq(kycProfiles.userId, userId)).for('update');
+      if (!profile || profile.partnerProvider !== this.provider || profile.status !== 'pending' || profile.submissionState !== 'queued'
+        || submissionId && profile.submissionId !== submissionId || !await jobStillActive(context)) return;
+      // A deployment switch cannot establish whether an older worker submitted anything.
+      // Preserve its generation/documents for reconciliation; never turn it into a new manual application.
+      await tx.update(kycProfiles).set({ status: 'unknown', submissionState: 'unknown', updatedAt: new Date() }).where(eq(kycProfiles.userId, userId));
+      await notifyAdmins(tx, { adminTelegramIds: this.options.adminTelegramIds ?? [] }, {
+        userId, eventKey: `verification:${profile.submissionId ?? userId}:manual-reconciliation`, stage: 'verification',
+      });
+    });
+  }
+
   private partnerInput(profile: typeof kycProfiles.$inferSelect, userId: string, beforeSubmit?: () => Promise<void>): PartnerCustomerInput {
     return { externalRef: userId, beforeSubmit, email: profile.email!, firstName: profile.firstName!, lastName: profile.lastName!,
       birthDate: profile.birthDate!, citizenship: profile.citizenship!,
@@ -202,6 +230,7 @@ export class KycService {
 
   private async poll(userId: string, submissionId?: string): Promise<void> {
     const [profile] = await this.db.select().from(kycProfiles).where(eq(kycProfiles.userId, userId));
+    if (profile?.submissionState === 'manual_review') return;
     if (!profile || !['pending', 'unknown'].includes(profile.status) || profile.partnerProvider !== this.provider ||
       (submissionId && profile.submissionId !== submissionId) || !profile.partnerCustomerId) return;
     if (profile.status === 'pending' && profile.submissionState === 'queued') return;
@@ -233,6 +262,7 @@ export class KycService {
     await this.db.transaction(async tx => {
       const [profile] = await tx.select().from(kycProfiles).where(eq(kycProfiles.userId, userId)).for('update');
       if (!profile || profile.partnerProvider !== this.provider || !['pending', 'unknown'].includes(profile.status) || (submissionId && profile.submissionId !== submissionId)) return;
+      if (profile.submissionState === 'manual_review') return;
       if (expected && (profile.status !== expected.status || profile.submissionState !== expected.submissionState ||
           profile.partnerCustomerId !== expected.partnerCustomerId || profile.updatedAt.getTime() !== expected.updatedAt.getTime())) return;
       if (!await jobStillActive(context)) return;

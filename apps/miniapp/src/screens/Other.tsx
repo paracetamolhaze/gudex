@@ -12,6 +12,7 @@ import { useFormat } from '../lib/format';
 import { isKycBirthDateEligible, kycApplicantValidity, KYC_UPLOAD_MAX_BYTES, type KycDocumentType, type KycImageError, validateKycImage } from '../lib/kyc';
 import { useActivity, useConfig, useKycRequirements, useMe, useRecheckKyc, useSubmitKyc, useUpdateLocale } from '../lib/queries';
 import { useSession } from '../lib/session';
+import { useAdminAccess } from '../lib/admin';
 import { haptic, platform } from '../lib/telegram';
 import { CardDetails, useRevealDetails, walletName } from './Card';
 
@@ -68,6 +69,7 @@ export function Profile() {
   const fmt = useFormat();
   const [securityError, setSecurityError] = useState<unknown>(null);
   const { data: me } = useMe();
+  const adminAccess = useAdminAccess();
   const updateLocale = useUpdateLocale();
   const kycStatus = me?.kyc.status ?? 'none';
   const tg = me?.telegram;
@@ -84,6 +86,11 @@ export function Profile() {
       </Surface>
 
       <Surface flush>
+        {adminAccess.data?.isAdmin === true && !adminAccess.isError ? <button className="list-item" onClick={() => navigate('/admin')}>
+          <Icon name="shield" color="var(--primary)" />
+          <span className="body-medium grow">Админка GUDEX</span>
+          <Icon name="chevronRight" color="var(--muted)" size={18} />
+        </button> : null}
         <button className="list-item" onClick={() => navigate('/kyc')}>
           <Icon name="shield" color={kycStatus === 'approved' ? 'var(--success)' : 'var(--primary)'} />
           <span className="body-medium grow">{t('profile.verification')}</span>
@@ -228,7 +235,8 @@ export function Kyc() {
           <div className="stack" style={{ alignItems: 'center', textAlign: 'center', padding: '24px 0', gap: 12 }}>
             {approved ? <Mascot pose="success" size={200} motion="pop" /> : <Mascot pose="thinking" size={200} />}
             <h2 className="heading">{approved ? t('kyc.approvedTitle') : unknown ? t('kyc.unknownTitle') : t('kyc.pendingTitle')}</h2>
-            <span className="muted">{approved ? t('kyc.approvedText') : unknown ? t('kyc.unknownText') : t('kyc.pendingText')}</span>
+            <span className="muted">{approved ? t('kyc.approvedText') : unknown ? t('kyc.unknownText') :
+              t(me.kyc.submissionState === 'manual_review' ? 'kyc.manualPendingText' : 'kyc.pendingText')}</span>
           </div>
         </Surface>
         {unknown ? <Button variant="secondary" title={t('common.refresh')} loading={recheck.isPending} onClick={() => recheck.mutate()} /> : null}

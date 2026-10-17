@@ -89,7 +89,8 @@ export function KycBanner() {
   const { data: me } = useMe();
   const status = me?.kyc.status;
   if (!status || status === 'approved') return null;
-  const text = { none: t('home.kycNeeded'), pending: me?.kyc.submissionState === 'unknown' ? t('kyc.unknownTitle') : t('home.kycPending'), unknown: t('kyc.unknownTitle'), rejected: t('home.kycRejected') }[status];
+  const text = { none: t('home.kycNeeded'), pending: me?.kyc.submissionState === 'unknown' ? t('kyc.unknownTitle') :
+    me?.kyc.submissionState === 'manual_review' ? t('kyc.pendingText') : t('home.kycPending'), unknown: t('kyc.unknownTitle'), rejected: t('home.kycRejected') }[status];
   return (
     <button className="link" style={{ color: 'inherit', textAlign: 'left' }} onClick={() => navigate('/kyc')}>
       <Notice
