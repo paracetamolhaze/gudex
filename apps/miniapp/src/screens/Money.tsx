@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate, useSearchParams } from 'react-router';
+import { Navigate, useNavigate, useSearchParams } from 'react-router';
 import { DEPOSIT_NETWORKS, fromMinor, isValidAddress, isWalletAsset, NETWORKS, type Network, toMinor, type WalletAsset } from '@gudex/shared';
 import { Icon } from '../components/Icon';
 import { AssetPicker, KycBanner, NetworkPicker, ServiceNotice, TestModeBanner } from '../components/misc';
@@ -80,6 +80,7 @@ export function Withdraw() {
   const idempotencyKey = useRef(crypto.randomUUID()).current;
 
   const failedQuery = [configQuery, walletQuery, meQuery].find((query) => query.error && !query.data);
+  if (configQuery.data?.integration.issuanceMode === 'manual') return <Navigate to="/" replace />;
   if (failedQuery) return <Page title={t('withdraw.title')}><QueryError error={failedQuery.error} onRetry={() => void failedQuery.refetch()} /></Page>;
   if (!config || !wallet || !me) return <Loading />;
   const tariff = config.assets.find((a) => a.asset === asset)!.networks.find((n) => n.id === current)!;
@@ -178,6 +179,7 @@ export function Transfer() {
   const { t } = useTranslation();
   const fmt = useFormat();
   const navigate = useNavigate();
+  const transferConfig = useConfig();
   const walletQuery = useWallet();
   const meQuery = useMe();
   const wallet = walletQuery.data;
@@ -193,6 +195,7 @@ export function Transfer() {
   const idempotencyKey = useRef(crypto.randomUUID()).current;
 
   const failedQuery = [walletQuery, meQuery].find((query) => query.error && !query.data);
+  if (transferConfig.data?.integration.issuanceMode === 'manual') return <Navigate to="/" replace />;
   if (failedQuery) return <Page title={t('transfer.title')}><QueryError error={failedQuery.error} onRetry={() => void failedQuery.refetch()} /></Page>;
   if (!wallet || !me) return <Loading />;
   const available = wallet.balances.find((b) => b.asset === asset)?.amount ?? '0';

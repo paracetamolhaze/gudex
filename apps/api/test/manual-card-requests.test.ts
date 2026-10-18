@@ -150,6 +150,18 @@ describe('manual card requests', () => {
       { asset: 'USDT', network: 'TRC20', address: tron }, { asset: 'USDT', network: 'BEP20', address: evm }, { asset: 'USDC', network: 'BEP20', address: evm }]);
   });
 
+  it('sends no money out of the app: transfers and withdrawals are refused', async () => {
+    let partner!: MockUpayPartner;
+    ctx = await createTestContext(db => { partner = new MockUpayPartner(db); return partner; }, { env });
+    const user = await cardholder(partner);
+    const transfer = await user.http.post('/v1/transfers', { username: 'someone', asset: 'USDT', amount: '1', idempotencyKey: randomUUID() },
+      { 'x-confirmation-token': await user.confirm() });
+    const withdrawal = await user.http.post('/v1/withdrawals', { asset: 'USDT', network: 'TRC20', address: 'TQ1TkHLPYPKn9wBRUySxD3pXZt4sb5bhZx',
+      amount: '10', idempotencyKey: randomUUID() }, { 'x-confirmation-token': await user.confirm() });
+    expect([transfer.status, withdrawal.status]).toEqual([503, 503]);
+    expect(await usdt(user.http)).toBe('90');
+  });
+
   it('gives each client one card: no new payment address and no second reserve once the card exists', async () => {
     let partner!: MockUpayPartner;
     ctx = await createTestContext(db => { partner = new MockUpayPartner(db); return partner; },

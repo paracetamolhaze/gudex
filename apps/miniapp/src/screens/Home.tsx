@@ -6,7 +6,7 @@ import { Mascot } from '../components/Mascot';
 import { ActivityRow, CardActivityNotice, KycBanner, ServiceNotice, TestModeBanner } from '../components/misc';
 import { ActionButton, Button, Page, QueryError, SectionTitle, Surface } from '../components/ui';
 import { useFormat } from '../lib/format';
-import { useActivity, useCards, useMe, useWallet } from '../lib/queries';
+import { useActivity, useCards, useConfig, useMe, useWallet } from '../lib/queries';
 
 export function Home() {
   const { t } = useTranslation();
@@ -16,6 +16,9 @@ export function Home() {
   const cards = useCards();
   const activity = useActivity(5);
   const { data: me } = useMe();
+  const { data: config } = useConfig();
+  // With manual issuance money is not sent out of the app: no transfer or withdrawal.
+  const moneyOut = config !== undefined && config.integration.issuanceMode !== 'manual';
   const card = cards.data?.[0];
   const clientReady = me !== undefined && cards.data !== undefined;
   const openCardFlow = () => navigate(me?.kyc.status === 'approved' ? '/card/issue' : '/kyc');
@@ -52,8 +55,8 @@ export function Home() {
 
       {clientReady ? <div className="actions">
         <ActionButton icon="arrowDown" label={t('home.deposit')} onClick={() => navigate('/deposit')} />
-        <ActionButton icon="send" label={t('home.transfer')} onClick={() => navigate('/transfer')} />
-        <ActionButton icon="arrowUpRight" label={t('home.withdraw')} onClick={() => navigate('/withdraw')} />
+        {moneyOut ? <ActionButton icon="send" label={t('home.transfer')} onClick={() => navigate('/transfer')} /> : null}
+        {moneyOut ? <ActionButton icon="arrowUpRight" label={t('home.withdraw')} onClick={() => navigate('/withdraw')} /> : null}
         <ActionButton icon="card" label={t('home.card')} onClick={() => navigate('/card')} />
       </div> : null}
 

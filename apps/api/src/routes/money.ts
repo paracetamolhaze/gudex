@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { type Locale, NETWORK_IDS, WALLET_ASSETS } from '@gudex/shared';
 import type { Deps, Services } from '../app';
 import { users } from '../db/schema';
-import { parse } from '../lib/errors';
+import { AppError, parse } from '../lib/errors';
 import { requireAuth } from './guard';
 
 const idempotencyKey = z.string().min(8).max(100);
@@ -28,12 +28,18 @@ export const moneyRoutes =
   async (app) => {
     requireAuth(app, services);
 
+    // With manual issuance the balance only holds issuance fees: nothing is sent out of the app.
+    const assertMovable = () => {
+      if (deps.config.CARD_ISSUANCE_MODE === 'manual') throw new AppError('provider_unavailable', 'Transfers and withdrawals are not available');
+    };
+
     const confirmed = async (request: FastifyRequest) => {
       const token = request.headers['x-confirmation-token'];
       await services.auth.verifyConfirmation(typeof token === 'string' ? token : undefined, request.userId);
     };
 
     app.post('/withdrawals', async (request, reply) => {
+      assertMovable();
       const body = parse(withdrawalBody, request.body);
       await confirmed(request);
       reply.status(202);
@@ -51,6 +57,7 @@ export const moneyRoutes =
     });
 
     app.post('/transfers', async (request) => {
+      assertMovable();
       const body = parse(transferBody, request.body);
       await confirmed(request);
       return services.transfers.create(request.userId, { ...body, amount: body.amount.replace(',', '.') });
