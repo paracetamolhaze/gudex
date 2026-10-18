@@ -96,6 +96,8 @@ export const kycProfiles = pgTable('kyc_profiles', {
   documentType: text('document_type'),
   documentCountry: text('document_country'),
   documentIds: jsonb('document_ids').$type<{ front: string; back?: string; selfie?: string }>(),
+  // Billing address from the single manual card application; the operator enters it in UPay.
+  billingAddress: jsonb('billing_address').$type<{ countryId: string; countryName: string | null; postalCode: string; address: string }>(),
   submissionId: uuid('submission_id'),
   submissionState: text('submission_state').notNull().default('none'),
   partnerProvider: text('partner_provider').notNull().default('mock'),
@@ -239,6 +241,51 @@ export const deposits = pgTable(
   (t) => [index('deposits_user_idx').on(t.userId)],
 );
 
+// ─── Оплата выпуска на кошелёк приложения ────────────────────────────────
+// Адрес из пула закрепляется за одним клиентом на время оплаты: плательщика определяет адрес.
+
+export const feePayments = pgTable('fee_payments', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id),
+  asset: text('asset').notNull(),
+  network: text('network').notNull(),
+  family: text('family').notNull(),
+  address: text('address').notNull(),
+  // The fee to collect, and what has arrived on the lent address so far (6-decimal units).
+  amount: money('amount').notNull(),
+  received: money('received').notNull().default(0n),
+  status: text('status').notNull().default('awaiting'),
+  transferId: uuid('transfer_id'),
+  createdAt: createdAt(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  paidAt: timestamp('paid_at', { withTimezone: true }),
+  endedAt: timestamp('ended_at', { withTimezone: true }),
+}, t => [
+  uniqueIndex('fee_payments_active_address').on(sql`lower(${t.address})`).where(sql`${t.status} = 'awaiting'`),
+  uniqueIndex('fee_payments_one_active').on(t.userId).where(sql`${t.status} = 'awaiting'`),
+  index('fee_payments_user_idx').on(t.userId),
+]);
+
+export const walletTransfers = pgTable('wallet_transfers', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  network: text('network').notNull(),
+  asset: text('asset').notNull(),
+  txHash: text('tx_hash').notNull(),
+  logIndex: integer('log_index').notNull().default(0),
+  fromAddress: text('from_address').notNull(),
+  toAddress: text('to_address').notNull(),
+  amount: money('amount').notNull(),
+  // false when the on-chain value has precision below 6 decimals and cannot match a request exactly.
+  exact: boolean('exact').notNull(),
+  blockNumber: bigint('block_number', { mode: 'bigint' }),
+  blockTime: timestamp('block_time', { withTimezone: true }).notNull(),
+  status: text('status').notNull().default('new'),
+  userId: uuid('user_id').references(() => users.id),
+  depositId: uuid('deposit_id').references(() => deposits.id),
+  createdAt: createdAt(),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+}, t => [uniqueIndex('wallet_transfers_identity').on(t.network, t.txHash, t.logIndex), index('wallet_transfers_status_idx').on(t.status)]);
+
 // ─── Вывод и переводы ────────────────────────────────────────────────────
 
 // A native payment link is created only by an explicit user request. Its
@@ -364,6 +411,15 @@ export const cards = pgTable(
     expiryMonth: integer('expiry_month'),
     expiryYear: integer('expiry_year'),
     failureReason: text('failure_reason'),
+    // Card balance as UPay reports it (USD cents); shown instead of the local estimate when known.
+    partnerBalance: money('partner_balance'),
+    partnerBalanceAt: timestamp('partner_balance_at', { withTimezone: true }),
+    // Operator-entered card number and CVV, AES-GCM sealed to this user and card.
+    requisitesCiphertext: text('requisites_ciphertext'),
+    requisitesIv: text('requisites_iv'),
+    requisitesTag: text('requisites_tag'),
+    // Crypto deposit addresses UPay gives this card for top-ups, entered by the operator.
+    topupAddresses: jsonb('topup_addresses').$type<Record<string, string>>(),
     lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -401,7 +457,7 @@ export const cardOperations = pgTable(
   (t) => [
     uniqueIndex('card_operations_idempotency').on(t.userId, t.idempotencyKey),
     check('card_operations_fulfillment_mode', sql`${t.fulfillmentMode} in ('automatic', 'manual')`),
-    check('card_operations_manual_dispatch', sql`${t.fulfillmentMode} <> 'manual' or (${t.type} = 'issue' and ${t.attempts} = 0 and ${t.status} in ('pending', 'succeeded', 'failed'))`),
+    check('card_operations_manual_dispatch', sql`${t.fulfillmentMode} <> 'manual' or (${t.attempts} = 0 and ${t.status} in ('pending', 'succeeded', 'failed'))`),
     index('card_operations_card_idx').on(t.cardId),
     check('card_operations_sponsorship_fields', sql`${t.sponsorshipId} is null or (${t.type} = 'issue' and ${t.partnerProvider} = 'upay' and ${t.asset} is not null and ${t.asset} = 'USDT' and ${t.amount} is not null and ${t.amount} = 10000000 and ${t.fee} is not null and ${t.fee} = ${t.amount})`),
   ],
@@ -485,7 +541,7 @@ export const adminNotifications = pgTable('admin_notifications', {
   createdAt: createdAt(),
   sentAt: timestamp('sent_at', { withTimezone: true }),
 }, t => [uniqueIndex('admin_notifications_event_recipient').on(t.eventKey, t.recipientTelegramId),
-  check('admin_notifications_stage', sql`${t.stage} in ('verification', 'issuance')`)]);
+  check('admin_notifications_stage', sql`${t.stage} in ('verification', 'issuance', 'card_request')`)]);
 
 export const adminAuditLog = pgTable('admin_audit_log', {
   id: uuid('id').primaryKey().defaultRandom(),

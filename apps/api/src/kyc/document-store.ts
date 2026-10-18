@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHmac, randomBytes, randomUUID } from 'node:crypto';
-import { and, eq, inArray, lte } from 'drizzle-orm';
+import { and, eq, gt, inArray, lte } from 'drizzle-orm';
 import type { Db, DbOrTx } from '../db/client';
 import { kycDocuments, users } from '../db/schema';
 import { AppError } from '../lib/errors';
@@ -88,6 +88,16 @@ export class DbKycDocumentStore {
     const image = await this.getOwned(userId, id);
     const envelope = this.encrypt(userId, id, { data: image.bytes.toString('base64'), remoteUri });
     await this.db.update(kycDocuments).set(envelope).where(and(eq(kycDocuments.id, id), eq(kycDocuments.userId, userId)));
+  }
+
+  // Extends only still-active own photos; expired ones stay expired and are cleaned up.
+  async retainOwned(userId: string, ids: string[], until: Date, db: DbOrTx = this.db): Promise<void> {
+    if (!ids.length) return;
+    const retained = await db.update(kycDocuments).set({ expiresAt: until })
+      .where(and(eq(kycDocuments.userId, userId), inArray(kycDocuments.id, ids), gt(kycDocuments.expiresAt, new Date())))
+      .returning({ id: kycDocuments.id });
+    if (retained.length !== new Set(ids).size) throw new AppError('validation', 'Document is missing, expired or belongs to a different upload slot');
+    for (const { id } of retained) await enqueue(db, 'kyc.cleanup', {}, { runAt: until, dedupeKey: `kyc.cleanup:${id}:retained` });
   }
 
   async removeOwned(userId: string, ids: string[], db: DbOrTx = this.db): Promise<void> {

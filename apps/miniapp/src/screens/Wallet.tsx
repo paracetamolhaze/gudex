@@ -1,7 +1,7 @@
 import QRCode from 'qrcode';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate, useSearchParams } from 'react-router';
+import { Navigate, useNavigate, useSearchParams } from 'react-router';
 import { DEPOSIT_NETWORKS, isWalletAsset, NETWORKS, type Network, type OperationDto, type WalletAsset } from '@gudex/shared';
 import { BankCard } from '../components/BankCard';
 import { Icon } from '../components/Icon';
@@ -14,10 +14,12 @@ import { cardBillingReady } from '../lib/billing';
 import { acceptedTopupQuote } from '../lib/topup';
 import { isCardRegionRestricted } from '../lib/error-format';
 import { AdditionalAttemptEntry } from '../components/AdditionalAttemptEntry';
-import { useCardBillingAddress, useCards, useConfig, useDepositAddress, useIssueCard, useIssueQuote, useOperation, useSimulateDeposit, useTopupCard, useTopupQuote, useWallet } from '../lib/queries';
+import { useCardBillingAddress, useCards, useConfig, useDepositAddress, useIssueCard, useIssueQuote, useMe, useOperation, useSimulateDeposit, useTopupCard, useTopupQuote, useWallet } from '../lib/queries';
 import { haptic } from '../lib/telegram';
 import { CardBillingEditor } from './CardBilling';
 import { DepositCheckout } from './DepositCheckout';
+import { FeePaymentPanel } from '../components/FeePayment';
+import { CardTopupAddresses } from '../components/CardTopupAddresses';
 
 // ─── Пополнение баланса ──────────────────────────────────────────────────
 
@@ -25,6 +27,7 @@ export function Deposit() {
   const { t } = useTranslation();
   const [params] = useSearchParams();
   const config = useConfig();
+  const cards = useCards(true);
   const initial = params.get('asset');
   const [asset, setAsset] = useState<WalletAsset>(isWalletAsset(initial) ? initial : 'USDT');
   const networks = DEPOSIT_NETWORKS[asset];
@@ -33,6 +36,11 @@ export function Deposit() {
 
   if (config.error && !config.data) return <Page title={t('deposit.title')}><QueryError error={config.error} onRetry={() => void config.refetch()} /></Page>;
   if (!config.data) return <Loading />;
+  // With manual issuance the client tops up the card itself, on the addresses UPay gives that card.
+  const topupCard = config.data.integration.issuanceMode === 'manual' ? cards.data?.find(card => card.status === 'active' && card.topupAddresses?.length) : undefined;
+  if (topupCard) return <Page title={t('topup.title')}>
+    <CardTopupAddresses addresses={topupCard.topupAddresses} />
+  </Page>;
   const invoiceCreation = config.data.integration.depositFlow === 'checkout';
   if (invoiceCreation || config.data.integration.depositInvoiceRead) return <DepositCheckout creationEnabled={invoiceCreation} />;
   if (config.data.integration.depositFlow !== 'address') return <Page title={t('deposit.title')}><Notice text={t('deposit.unavailable')} /></Page>;
@@ -163,7 +171,7 @@ export function CardOperationProgress({ operationId, title, kind, issueRestricti
   const operation = useOperation(operationId);
   const { data: config } = useConfig();
   const status = operation.data?.status;
-  const manualPending = kind === 'issue' && operation.data?.fulfillmentMode === 'manual' && status === 'pending';
+  const manualPending = operation.data?.fulfillmentMode === 'manual' && status === 'pending';
   const restricted = kind === 'issue' && (operation.data?.issueRestriction ?? issueRestriction) === 'billing_phone_region_restricted';
   useEffect(() => {
     if (status === 'succeeded') haptic.success();
@@ -176,8 +184,8 @@ export function CardOperationProgress({ operationId, title, kind, issueRestricti
         : status === 'failed' ? <Notice tone="danger" text={t(`${kind}.failedText`)} />
           : <Surface className="stack card-operation-progress">
             <div className="card-operation-progress-copy" role="status" aria-live="polite">
-              <span className="body-medium">{t(restricted ? 'issue.restrictedTitle' : manualPending ? 'issue.manualTitle' : kind === 'issue' && status === 'unknown' ? 'issue.reviewTitle' : `${kind}.processingTitle`)}</span>
-              <span className="caption muted">{t(restricted ? 'errors.card_region_restricted' : manualPending ? 'issue.manualText' : kind === 'issue' && status === 'unknown' ? 'issue.reviewText' : `${kind}.${status === 'unknown' ? 'checkingText' : 'processingText'}`)}</span>
+              <span className="body-medium">{t(restricted ? 'issue.restrictedTitle' : manualPending ? `${kind}.manualTitle` : kind === 'issue' && status === 'unknown' ? 'issue.reviewTitle' : `${kind}.processingTitle`)}</span>
+              <span className="caption muted">{t(restricted ? 'errors.card_region_restricted' : manualPending ? `${kind}.manualText` : kind === 'issue' && status === 'unknown' ? 'issue.reviewText' : `${kind}.${status === 'unknown' ? 'checkingText' : 'processingText'}`)}</span>
             </div>
             {status === 'unknown' ? <Button variant="secondary" title={t('common.refresh')} loading={operation.isFetching} onClick={() => void operation.refetch()} /> : null}
           </Surface>}
@@ -194,6 +202,7 @@ export function CardIssue() {
   const configQuery = useConfig();
   const walletQuery = useWallet();
   const cardsQuery = useCards(true);
+  const { data: me } = useMe();
   const config = configQuery.data;
   const wallet = walletQuery.data;
   const issue = useIssueCard();
@@ -211,6 +220,10 @@ export function CardIssue() {
   if (pendingCard?.pendingOperationId) return <CardOperationProgress operationId={pendingCard.pendingOperationId} issueRestriction={pendingCard.issueRestriction} title={t('issue.title')} kind="issue" />;
   if (pendingCard) return <Page title={t('issue.title')}><Notice text={t(pendingCard.issueRestriction === 'billing_phone_region_restricted' ? 'errors.card_region_restricted' : 'issue.reviewTitle')} />
     <Button title={t('home.card')} onClick={() => navigate('/card', { replace: true })} /></Page>;
+  // Manual issuance starts with the single application form, which also reserves the fee.
+  if (config?.integration.issuanceMode === 'manual' && me && me.kyc.status !== 'approved') return <Navigate to="/kyc" replace />;
+  // Manual issuance gives every client one card.
+  if (config?.integration.issuanceMode === 'manual' && cardsQuery.data.some(card => card.status === 'active' || card.status === 'frozen')) return <Navigate to="/card" replace />;
   if (configQuery.error && !config) return <Page title={t('issue.title')}><QueryError error={configQuery.error} onRetry={() => void configQuery.refetch()} /></Page>;
   if (walletQuery.error && !wallet) return <Page title={t('issue.title')}><QueryError error={walletQuery.error} onRetry={() => void walletQuery.refetch()} /></Page>;
   if (!config || !wallet) return <Loading />;
@@ -227,6 +240,7 @@ export function CardIssue() {
   const funding = cardIssueFunding(wallet, asset, quoteQuery.data);
   const needsFunds = !regionRestricted && quoteReady && !brokerFunded && (!funding.enough || noFunds);
   const canDeposit = fundingEnabled(config.integration.deposits);
+  const feeWallet = config.integration.issuanceMode === 'manual' ? config.integration.feeWallet ?? null : null;
 
   return (
     <Page title={t('issue.title')}>
@@ -251,7 +265,12 @@ export function CardIssue() {
       {!regionRestricted ? quoteQuery.error ? <QueryError error={quoteQuery.error} onRetry={() => void quoteQuery.refetch()} />
         : !quoteQuery.isFetching && (!quote || quoteQuery.isStale) ? <Notice tone="warning" text={t('integration.issueUnavailable')}
           action={<Button small variant="ghost" title={t('common.refresh')} onClick={() => void quoteQuery.refetch()} />} /> : null : null}
-      {needsFunds ? (
+      {/* Manual issuance: the fee is paid to an app wallet address; once it arrives the request moves on by itself. */}
+      {needsFunds && feeWallet ? <>
+        <span className="muted">{t('issue.payToWallet')}</span>
+        <FeePaymentPanel wallet={feeWallet} onPaid={() => { void cardsQuery.refetch(); void walletQuery.refetch(); }} />
+      </> : null}
+      {needsFunds && !feeWallet ? (
         <Notice
           tone="warning"
           text={funding.shortage && funding.shortage !== '0'
@@ -260,7 +279,7 @@ export function CardIssue() {
           action={canDeposit ? <Button small variant="ghost" title={t('home.deposit')} onClick={() => navigate(`/deposit?asset=${asset}&amount=${encodeURIComponent(funding.shortage ?? '')}&returnTo=issue`)} /> : undefined}
         />
       ) : null}
-      {needsFunds && !canDeposit ? <Notice tone="warning" text={t('deposit.unavailable')} /> : null}
+      {needsFunds && !canDeposit && !feeWallet ? <Notice tone="warning" text={t('deposit.unavailable')} /> : null}
       {issue.error && !isCardRegionRestricted(issue.error) && (!noFunds || brokerFunded) ? (
         <Notice
           tone="danger"
@@ -326,7 +345,13 @@ export function CardTopup() {
     if (reportedMinimum) setMinimums((previous) => previous[minimumKey] === reportedMinimum ? previous : { ...previous, [minimumKey]: reportedMinimum });
   }, [minimumKey, reportedMinimum]);
   const idempotencyKey = useRef(crypto.randomUUID()).current;
+  const cardsQuery = useCards(true);
+  const addresses = cardsQuery.data?.find(card => card.id === cardId)?.topupAddresses ?? [];
 
+  // The card's own UPay addresses: the client sends crypto there and UPay tops the card up.
+  if (addresses.length) return <Page title={t('topup.title')}>
+    <CardTopupAddresses addresses={addresses} />
+  </Page>;
   if (operationId) return <CardOperationProgress operationId={operationId} title={t('topup.title')} kind="topup" />;
   if (configQuery.error && !config) return <Page title={t('topup.title')}><QueryError error={configQuery.error} onRetry={() => void configQuery.refetch()} /></Page>;
   if (walletQuery.error && !wallet) return <Page title={t('topup.title')}><QueryError error={walletQuery.error} onRetry={() => void walletQuery.refetch()} /></Page>;

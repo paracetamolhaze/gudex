@@ -1,3 +1,6 @@
+/** Identity documents a client may verify with; a driving licence is accepted only with manual issuance. */
+export type KycDocumentKind = 'id_card' | 'passport' | 'driving_license';
+
 // Контракт API между backend и приложением. Все суммы — десятичные строки.
 import type { Asset, Network, WalletAsset } from './assets';
 
@@ -30,6 +33,7 @@ export type ErrorCode =
   | 'recipient_not_found'
   | 'self_transfer'
   | 'provider_unavailable'
+  | 'payment_addresses_busy'
   | 'internal';
 
 export interface ApiErrorBody {
@@ -76,7 +80,7 @@ export interface KycRequirementsDto {
   documentsRequired: boolean;
   selfieRequired: boolean;
   maxUploadBytes: number;
-  documentTypes: ('id_card' | 'passport')[];
+  documentTypes: KycDocumentKind[];
 }
 
 export interface MeDto {
@@ -140,11 +144,24 @@ export interface DepositInvoiceDto {
   createdAt: string;
 }
 
+/** Card top-up routes UPay offers: the coin and the network of one deposit address. */
+export const CARD_TOPUP_ROUTES = [
+  { key: 'USDT_TRC20', asset: 'USDT', network: 'TRC20' },
+  { key: 'USDT_ERC20', asset: 'USDT', network: 'ERC20' },
+  { key: 'USDT_BEP20', asset: 'USDT', network: 'BEP20' },
+  { key: 'USDC_ERC20', asset: 'USDC', network: 'ERC20' },
+  { key: 'USDC_BEP20', asset: 'USDC', network: 'BEP20' },
+] as const;
+export type CardTopupRouteKey = typeof CARD_TOPUP_ROUTES[number]['key'];
+export type CardTopupAddresses = Partial<Record<CardTopupRouteKey, string>>;
+export interface CardTopupAddressDto { asset: 'USDT' | 'USDC'; network: 'TRC20' | 'ERC20' | 'BEP20'; address: string }
+
 export interface CardDto {
   id: string;
   status: CardStatus;
   pendingOperationStatus: 'pending' | 'processing' | 'unknown' | null;
   pendingOperationId: string | null;
+  pendingFulfillmentMode?: 'automatic' | 'manual' | null;
   issueRestriction?: 'billing_phone_region_restricted' | null;
   productName: string;
   last4: string | null;
@@ -154,6 +171,8 @@ export interface CardDto {
   currency: 'USD';
   balance: string;
   failureReason: string | null;
+  /** Addresses the client sends crypto to for topping up this card (entered by the operator). */
+  topupAddresses: CardTopupAddressDto[];
   createdAt: string;
 }
 
@@ -211,6 +230,36 @@ export interface CardBillingAddressDto {
   required: boolean;
   status: 'missing' | 'ready' | 'pending';
   address: CardBillingAddressInput | null;
+}
+
+// Manual issuance: one form with identity, documents, billing address and the reserved fee.
+export interface CardApplicationKycInput {
+  firstName: string;
+  lastName: string;
+  email: string;
+  birthDate: string;
+  citizenship: string;
+  phone: string;
+  globalCode: string;
+  documentType: KycDocumentKind;
+  documentCountry: string;
+  documentIds: { front: string; back?: string; selfie?: string };
+}
+
+export interface CardApplicationInput {
+  kyc: CardApplicationKycInput;
+  billing: CardBillingAddressInput;
+  asset: WalletAsset;
+  idempotencyKey: string;
+  expectedFundingSource?: 'wallet' | 'broker';
+  expectedCustomerCharge?: string;
+}
+
+// Without enough balance the application is saved and waits for the fee: card and operation are null.
+export interface CardApplicationDto {
+  kyc: KycDto;
+  card: CardDto | null;
+  operation: OperationDto | null;
 }
 
 export interface CardBillingCountryDto {
@@ -354,5 +403,49 @@ export interface AppConfigDto {
     depositInvoiceRead: boolean;
     withdrawals: 'demo' | 'disabled';
     capabilities: { kyc: boolean; issue: boolean; topup: boolean; freeze: boolean };
+    // The shared app wallet that accepts the card issuance fee (manual issuance only).
+    feeWallet?: FeeWalletDto | null;
   };
+}
+
+export type FeeWalletNetwork = 'TRC20' | 'BEP20' | 'ERC20' | 'POLYGON';
+
+export interface FeeWalletDto {
+  fee: string;
+  networks: { network: FeeWalletNetwork; assets: WalletAsset[] }[];
+}
+
+// An app wallet address lent to this client for the fee; the address identifies the payer.
+export interface FeePaymentDto {
+  id: string;
+  asset: WalletAsset;
+  network: FeeWalletNetwork;
+  address: string;
+  // The fee to send, what has arrived so far and what is still missing.
+  amount: string;
+  received: string;
+  missing: string;
+  status: 'awaiting' | 'paid' | 'expired' | 'cancelled';
+  expiresAt: string;
+  /** Seconds left on the lease by the server clock when the answer was made. */
+  secondsLeft: number;
+  createdAt: string;
+  paidAt: string | null;
+  txHash: string | null;
+  explorerUrl: string | null;
+}
+
+export interface WalletTransferDto {
+  id: string;
+  network: FeeWalletNetwork;
+  asset: WalletAsset;
+  amount: string;
+  exact: boolean;
+  from: string;
+  to: string;
+  txHash: string;
+  explorerUrl: string;
+  blockTime: string;
+  status: 'new' | 'matched' | 'unmatched' | 'assigned';
+  userId: string | null;
 }

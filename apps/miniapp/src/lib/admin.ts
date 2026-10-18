@@ -1,4 +1,6 @@
+import type { CardTopupAddresses } from '@gudex/shared';
 import { useQuery } from '@tanstack/react-query';
+import type { WalletTransferDto } from '@gudex/shared';
 import { request } from './api';
 
 export interface AdminDocument {
@@ -18,6 +20,7 @@ export interface AdminOperation {
   asset: string | null;
   amount: string | null;
   fee: string | null;
+  netUsd?: string | null;
   createdAt: string;
   partnerCardId: string | null;
   last4: string | null;
@@ -28,7 +31,7 @@ export interface AdminClient {
   telegramId: string;
   username: string | null;
   createdAt: string;
-  billingAddress: { countryId: string; postalCode: string; address: string } | null;
+  billingAddress: { countryId: string; countryName?: string | null; postalCode: string; address: string } | null;
   kyc: null | {
     status: string;
     submissionState: string;
@@ -47,10 +50,12 @@ export interface AdminClient {
     documents: AdminDocument[];
   };
   operations: AdminOperation[];
+  /** The client's cards (being prepared, active or frozen) with the top-up addresses the operator entered. */
+  cards: { id: string; status: string; last4: string | null; topupAddresses: CardTopupAddresses }[];
 }
 
 export interface AdminApplications {
-  items: { userId: string; telegramId: string; name: string; kycStatus: string; submissionState: string; hasPendingCard: boolean; createdAt: string }[];
+  items: { userId: string; telegramId: string; name: string; kycStatus: string; submissionState: string; hasPendingCard: boolean; hasCardRequest?: boolean; createdAt: string }[];
   page: number;
   limit: number;
   total: number;
@@ -95,10 +100,24 @@ export function useAdminClient(query: string | null, enabled: boolean) {
     enabled: enabled && Boolean(query), retry: false, staleTime: 0, gcTime: 0, refetchOnWindowFocus: false });
 }
 
-export function useAdminProviderCards(userId: string, enabled: boolean) {
-  return useQuery({ queryKey: [...adminKeys.all, 'provider-cards', userId],
-    queryFn: ({ signal }) => request<AdminProviderCard[]>(`${PREFIX}/clients/${encodeURIComponent(userId)}/provider-cards`, { cache: 'no-store', signal }),
+// For an application under review the operator names the UPay customer; otherwise the verified one is used.
+export function useAdminProviderCards(userId: string, customerNo: string | null, enabled: boolean) {
+  return useQuery({ queryKey: [...adminKeys.all, 'provider-cards', userId, customerNo],
+    queryFn: ({ signal }) => request<AdminProviderCard[]>(`${PREFIX}/clients/${encodeURIComponent(userId)}/provider-cards${
+      customerNo ? `?customerNo=${encodeURIComponent(customerNo)}` : ''}`, { cache: 'no-store', signal }),
     enabled, retry: false, staleTime: 0, gcTime: 0, refetchOnWindowFocus: false });
+}
+
+// Transfers to the app wallet that matched no payment request (wrong amount, late, other network).
+export function useAdminWalletTransfers(enabled: boolean) {
+  return useQuery({ queryKey: [...adminKeys.all, 'wallet-transfers'],
+    queryFn: ({ signal }) => request<WalletTransferDto[]>(`${PREFIX}/wallet-transfers`, { cache: 'no-store', signal }),
+    enabled, retry: false, staleTime: 0, gcTime: 0, refetchOnWindowFocus: false });
+}
+
+export function assignWalletTransfer(id: string, query: string, confirmationToken: string) {
+  return request<WalletTransferDto>(`${PREFIX}/wallet-transfers/${encodeURIComponent(id)}/assign`, { method: 'POST', body: { query }, cache: 'no-store',
+    headers: { 'X-Confirmation-Token': confirmationToken } });
 }
 
 export function getAdminDocument(userId: string, documentId: string, signal: AbortSignal) {
@@ -109,6 +128,18 @@ export function getAdminDocument(userId: string, documentId: string, signal: Abo
 export function updateAdminClient(userId: string, action: 'kyc' | 'reject' | 'card', body: object, confirmationToken: string) {
   return request<AdminClient>(`${PREFIX}/clients/${encodeURIComponent(userId)}/${action}`, { method: 'POST', body, cache: 'no-store',
     headers: { 'X-Confirmation-Token': confirmationToken } });
+}
+
+// The crypto addresses UPay gives the card for top-ups; an empty value removes that route.
+export function saveCardTopupAddresses(userId: string, cardId: string, addresses: CardTopupAddresses, confirmationToken: string) {
+  return request<AdminClient>(`${PREFIX}/clients/${encodeURIComponent(userId)}/cards/${encodeURIComponent(cardId)}/topup-addresses`,
+    { method: 'POST', body: addresses, cache: 'no-store', headers: { 'X-Confirmation-Token': confirmationToken } });
+}
+
+// A top-up or freeze the operator performed in UPay (or declined).
+export function resolveAdminRequest(userId: string, operationId: string, body: { done: true } | { done: false; reason: string }, confirmationToken: string) {
+  return request<AdminClient>(`${PREFIX}/clients/${encodeURIComponent(userId)}/requests/${encodeURIComponent(operationId)}`, { method: 'POST', body,
+    cache: 'no-store', headers: { 'X-Confirmation-Token': confirmationToken } });
 }
 
 // The old automatic UNKNOWN is only for investigation, never a manual fulfillment target.

@@ -1,31 +1,18 @@
-// Список гражданств для формы KYC. СНГ — первыми, остальные по алфавиту.
-// Какие из них примет эмитент карты — решает партнёр при проверке.
-export const COUNTRIES: { code: string; ru: string; en: string }[] = [
-  { code: 'KZ', ru: 'Казахстан', en: 'Kazakhstan' },
-  { code: 'UZ', ru: 'Узбекистан', en: 'Uzbekistan' },
-  { code: 'KG', ru: 'Кыргызстан', en: 'Kyrgyzstan' },
-  { code: 'RU', ru: 'Россия', en: 'Russia' },
-  { code: 'BY', ru: 'Беларусь', en: 'Belarus' },
-  { code: 'UA', ru: 'Украина', en: 'Ukraine' },
-  { code: 'TJ', ru: 'Таджикистан', en: 'Tajikistan' },
-  { code: 'TM', ru: 'Туркменистан', en: 'Turkmenistan' },
-  { code: 'AZ', ru: 'Азербайджан', en: 'Azerbaijan' },
-  { code: 'AM', ru: 'Армения', en: 'Armenia' },
-  { code: 'GE', ru: 'Грузия', en: 'Georgia' },
-  { code: 'MD', ru: 'Молдова', en: 'Moldova' },
-  { code: 'AR', ru: 'Аргентина', en: 'Argentina' },
-  { code: 'AE', ru: 'ОАЭ', en: 'United Arab Emirates' },
-  { code: 'DE', ru: 'Германия', en: 'Germany' },
-  { code: 'ID', ru: 'Индонезия', en: 'Indonesia' },
-  { code: 'IL', ru: 'Израиль', en: 'Israel' },
-  { code: 'CY', ru: 'Кипр', en: 'Cyprus' },
-  { code: 'LV', ru: 'Латвия', en: 'Latvia' },
-  { code: 'LT', ru: 'Литва', en: 'Lithuania' },
-  { code: 'EE', ru: 'Эстония', en: 'Estonia' },
-  { code: 'PL', ru: 'Польша', en: 'Poland' },
-  { code: 'RS', ru: 'Сербия', en: 'Serbia' },
-  { code: 'ME', ru: 'Черногория', en: 'Montenegro' },
-  { code: 'TH', ru: 'Таиланд', en: 'Thailand' },
-  { code: 'TR', ru: 'Турция', en: 'Turkey' },
-  { code: 'VN', ru: 'Вьетнам', en: 'Vietnam' },
-];
+import { ISO_COUNTRY_CODES } from '@gudex/shared';
+
+function regionNames(locale: string): ((code: string) => string) {
+  try {
+    const names = new Intl.DisplayNames([locale], { type: 'region', fallback: 'code' });
+    return code => names.of(code) ?? code;
+  } catch { return code => code; }
+}
+
+/** Country name in the interface language; the code stays as is if the device has no name for it. */
+export const countryName = (code: string, locale: string) => regionNames(locale)(code);
+
+/** All countries for citizenship, document and address pickers, in alphabetical order of the interface language. */
+export function countryOptions(locale: string): { code: string; name: string }[] {
+  const name = regionNames(locale);
+  const collator = new Intl.Collator(locale, { sensitivity: 'base' });
+  return ISO_COUNTRY_CODES.map(code => ({ code, name: name(code) })).sort((a, b) => collator.compare(a.name, b.name));
+}

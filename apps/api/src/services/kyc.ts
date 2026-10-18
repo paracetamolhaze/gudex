@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import type { KycDto, KycRequirementsDto } from '@gudex/shared';
-import type { Db } from '../db/client';
+import type { KycDocumentKind, KycDto, KycRequirementsDto } from '@gudex/shared';
+import type { Db, Tx } from '../db/client';
 import { kycProfiles, users } from '../db/schema';
 import { DbKycDocumentStore, MAX_KYC_UPLOAD_BYTES, type KycDocumentIds, type KycDocumentUpload } from '../kyc/document-store';
 import { AppError } from '../lib/errors';
@@ -13,8 +13,9 @@ import { notifyAdmins } from './admin-notify';
 
 export interface KycInput {
   firstName: string; lastName: string; email: string; birthDate: string; citizenship: string;
-  phone?: string; globalCode?: string; documentType?: 'id_card' | 'passport'; documentCountry?: string; documentIds?: KycDocumentIds;
+  phone?: string; globalCode?: string; documentType?: KycDocumentKind; documentCountry?: string; documentIds?: KycDocumentIds;
 }
+export type KycBillingAddress = NonNullable<typeof kycProfiles.$inferSelect['billingAddress']>;
 export interface KycOptions { live: boolean; enabled: boolean; requireSelfie: boolean; manual?: boolean; adminTelegramIds?: string[]; }
 
 async function jobStillActive(context?: JobContext): Promise<boolean> {
@@ -37,7 +38,9 @@ export class KycService {
     const remote = this.options.live && this.options.enabled && !this.options.manual ? await this.partner.getKycRequirements?.() : undefined;
     return { live: this.options.live, enabled: Boolean(this.options.manual) || !this.options.live || this.options.enabled,
       documentsRequired: this.options.live || Boolean(this.options.manual), selfieRequired: (this.options.live || Boolean(this.options.manual)) && (this.options.requireSelfie || Boolean(remote?.selfieRequired)),
-      maxUploadBytes: MAX_KYC_UPLOAD_BYTES, documentTypes: remote?.documentTypes ?? ['id_card', 'passport'] };
+      maxUploadBytes: MAX_KYC_UPLOAD_BYTES,
+      // The operator checks documents by hand with manual issuance, so a driving licence is accepted there too.
+      documentTypes: this.options.manual ? ['passport', 'id_card', 'driving_license'] : remote?.documentTypes ?? ['id_card', 'passport'] };
   }
 
   async get(userId: string): Promise<KycDto> {
@@ -75,12 +78,27 @@ export class KycService {
   }
 
   async submit(userId: string, input: KycInput): Promise<KycDto> {
+    await this.validateSubmission(input);
+    await this.db.transaction(async tx => {
+      const submissionId = await this.saveSubmission(tx, userId, input);
+      if (this.options.manual) {
+        await notifyAdmins(tx, { adminTelegramIds: this.options.adminTelegramIds ?? [] }, { userId, eventKey: `verification:${submissionId}`, stage: 'verification' });
+      } else {
+        await enqueue(tx, 'kyc.submit', { userId, submissionId }, { dedupeKey: `kyc.submit:${submissionId}` });
+      }
+    });
+    return this.get(userId);
+  }
+
+  // Checks that need no lock: contact formats, required photos and selfie policy.
+  async validateSubmission(input: KycInput): Promise<void> {
     this.assertReady();
     if (this.options.live || this.options.manual) {
       if (!input.phone || !input.globalCode || !input.documentCountry || !input.documentType || !input.documentIds?.front || !this.documents) {
         throw new AppError('validation', 'Phone and identity document photos are required');
       }
-      if (input.documentType === 'id_card' && !input.documentIds.back) throw new AppError('validation', 'ID card back photo is required');
+      if (input.documentType === 'driving_license' && !this.options.manual) throw new AppError('validation', 'A driving licence is accepted only with manual issuance');
+      if (input.documentType !== 'passport' && !input.documentIds.back) throw new AppError('validation', 'The back of the document is required');
       try { assertNewCustomerCanUseCard({ firstName: input.firstName.trim(), lastName: input.lastName.trim(), email: input.email.trim(),
         kyc: { phone: input.phone, globalCode: input.globalCode } }); }
       catch (error) {
@@ -89,33 +107,35 @@ export class KycService {
       }
       if ((await this.requirements()).selfieRequired && !input.documentIds.selfie) throw new AppError('validation', 'Selfie is required for this product');
     }
-    await this.db.transaction(async tx => {
-      await tx.select({ id: users.id }).from(users).where(eq(users.id, userId)).for('update');
-      const [row] = await tx.select().from(kycProfiles).where(eq(kycProfiles.userId, userId)).for('update');
-      const sameProvider = row?.partnerProvider === this.provider;
-      if (sameProvider && row && ['pending', 'approved', 'unknown'].includes(row.status)) {
-        throw new AppError('kyc_already_submitted', 'KYC is already submitted or requires reconciliation');
-      }
-      if (this.options.live || this.options.manual) {
-        for (const [kind, id] of Object.entries(input.documentIds!)) await this.documents!.getOwned(userId, id, kind as 'front' | 'back' | 'selfie', tx);
-      }
-      const submissionId = randomUUID();
-      const values = {
-        status: 'pending' as const, partnerProvider: this.provider, partnerCustomerId: sameProvider ? row?.partnerCustomerId ?? null : null,
-        firstName: input.firstName.trim().toUpperCase(), lastName: input.lastName.trim().toUpperCase(),
-        email: input.email.trim().toLowerCase(), birthDate: input.birthDate, citizenship: input.citizenship.toUpperCase(),
-        phone: input.phone ?? null, globalCode: input.globalCode ?? null, documentType: input.documentType ?? null,
-        documentCountry: input.documentCountry?.toUpperCase() ?? null, documentIds: input.documentIds ?? null,
-        submissionId, submissionState: this.options.manual ? 'manual_review' : 'queued', documentsSubmittedAt: null, rejectionReason: null, submittedAt: new Date(), updatedAt: new Date(),
-      };
-      await tx.insert(kycProfiles).values({ userId, ...values }).onConflictDoUpdate({ target: kycProfiles.userId, set: values });
-      if (this.options.manual) {
-        await notifyAdmins(tx, { adminTelegramIds: this.options.adminTelegramIds ?? [] }, { userId, eventKey: `verification:${submissionId}`, stage: 'verification' });
-      } else {
-        await enqueue(tx, 'kyc.submit', { userId, submissionId }, { dedupeKey: `kyc.submit:${submissionId}` });
-      }
-    });
-    return this.get(userId);
+  }
+
+  /** Stores a new submission under the user lock; the caller decides what happens next. */
+  async saveSubmission(tx: Tx, userId: string, input: KycInput, billingAddress: KycBillingAddress | null = null): Promise<string> {
+    await tx.select({ id: users.id }).from(users).where(eq(users.id, userId)).for('update');
+    const [row] = await tx.select().from(kycProfiles).where(eq(kycProfiles.userId, userId)).for('update');
+    const sameProvider = row?.partnerProvider === this.provider;
+    if (sameProvider && row && ['pending', 'approved', 'unknown'].includes(row.status)) {
+      throw new AppError('kyc_already_submitted', 'KYC is already submitted or requires reconciliation');
+    }
+    if (this.options.live || this.options.manual) {
+      for (const [kind, id] of Object.entries(input.documentIds!)) await this.documents!.getOwned(userId, id, kind as 'front' | 'back' | 'selfie', tx);
+    }
+    const submissionId = randomUUID();
+    const values = {
+      status: 'pending' as const, partnerProvider: this.provider, partnerCustomerId: sameProvider ? row?.partnerCustomerId ?? null : null,
+      firstName: input.firstName.trim().toUpperCase(), lastName: input.lastName.trim().toUpperCase(),
+      email: input.email.trim().toLowerCase(), birthDate: input.birthDate, citizenship: input.citizenship.toUpperCase(),
+      phone: input.phone ?? null, globalCode: input.globalCode ?? null, documentType: input.documentType ?? null,
+      documentCountry: input.documentCountry?.toUpperCase() ?? null, documentIds: input.documentIds ?? null, billingAddress,
+      submissionId, submissionState: this.options.manual ? 'manual_review' : 'queued', documentsSubmittedAt: null, rejectionReason: null, submittedAt: new Date(), updatedAt: new Date(),
+    };
+    await tx.insert(kycProfiles).values({ userId, ...values }).onConflictDoUpdate({ target: kycProfiles.userId, set: values });
+    return submissionId;
+  }
+
+  // An operator may take days; keep the submitted photos until approval or rejection removes them.
+  async retainDocuments(tx: Tx, userId: string, ids: KycDocumentIds | undefined, seconds: number): Promise<void> {
+    if (ids && this.documents) await this.documents.retainOwned(userId, Object.values(ids), new Date(Date.now() + seconds * 1000), tx);
   }
 
   handlers(): Record<string, JobHandler> {

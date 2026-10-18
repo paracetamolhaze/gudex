@@ -1,6 +1,7 @@
 import { createHash, createHmac } from 'node:crypto';
 import { and, desc, eq, inArray, isNull, ne, notInArray, sql } from 'drizzle-orm';
 import {
+  CARD_TOPUP_ROUTES,
   type CardDto,
   type CardSensitiveDto,
   type CardIssueQuoteDto,
@@ -25,6 +26,7 @@ import { enqueue, type JobContext, type JobHandler, PermanentJobError, RetryLate
 import { notify } from './notify';
 import { notifyAdmins } from './admin-notify';
 import { CardBillingService } from './card-billing';
+import { CardRequisitesVault } from './card-requisites';
 import { rewardReferrer } from './referrals';
 import { ADDITIONAL_ISSUE_ORIGINAL_ID, ADDITIONAL_ISSUE_TELEGRAM_ID, ADDITIONAL_ISSUE_TERMS, type AdditionalIssueSnapshot, signAdditionalIssueQuote, verifyAdditionalIssueQuote } from './additional-issue-quote';
 
@@ -38,6 +40,9 @@ const LIVE_STATUSES = ['pending', 'active', 'frozen'] as const;
 const TERMINAL = ['succeeded', 'failed'];
 const SYNC_INTERVAL_MS = 60_000;
 const ISSUE_RECEIPT_LOOKUP_MS = 30 * 60_000;
+// A freeze or unfreeze moves no money: if the card list still shows the old state this long after, the change did not happen.
+const STATUS_CONFIRM_MS = 10 * 60_000;
+const STATUS_GIVE_UP_MS = 24 * 60 * 60_000;
 
 function operationDto(op: OperationRow): OperationDto {
   const asset = op.asset as WalletAsset | null;
@@ -60,6 +65,7 @@ function operationDto(op: OperationRow): OperationDto {
 export class CardService {
   private readonly issueFeeUsd: bigint;
   private readonly minTopupUsd: bigint;
+  private vault: CardRequisitesVault | undefined;
 
   constructor(
     private readonly db: Db,
@@ -69,6 +75,14 @@ export class CardService {
     this.issueFeeUsd = toMinor(config.CARD_ISSUE_FEE_USD, 'USD');
     this.minTopupUsd = toMinor(config.CARD_MIN_TOPUP_USD, 'USD');
   }
+
+  // With manual issuance every client has exactly one card.
+  private get maxCards(): number { return this.config.CARD_ISSUANCE_MODE === 'manual' ? 1 : this.config.MAX_CARDS_PER_USER; }
+
+  private get requisites(): CardRequisitesVault { return this.vault ??= new CardRequisitesVault(this.config.appSecret); }
+
+  // Manual issuance: staff perform every card action in the UPay panel; GUDEX only records and reads.
+  private get manual(): boolean { return this.config.CARD_ISSUANCE_MODE === 'manual'; }
 
   // ─── Чтение ────────────────────────────────────────────────────────────
 
@@ -119,6 +133,9 @@ export class CardService {
     if (!card.partnerCardId || (card.status !== 'active' && card.status !== 'frozen')) {
       throw new AppError('card_not_active', 'Card is not issued yet');
     }
+    const stored = this.requisites.open(userId, card.id, card);
+    if (stored) return { pan: stored.pan, cvv: stored.cvv, expiryMonth: card.expiryMonth ?? 0, expiryYear: card.expiryYear ?? 0, holderName: card.holderName ?? '' };
+    if (this.manual) throw new AppError('card_not_active', 'Card details are not available yet');
     return this.partner.getCardSensitive(card.partnerCardId);
   }
 
@@ -148,9 +165,12 @@ export class CardService {
       expiryMonth: card.expiryMonth,
       expiryYear: card.expiryYear,
       currency: 'USD',
-      balance: fromMinor(account?.balance ?? 0n, 'USD'),
+      balance: fromMinor(card.partnerBalance ?? account?.balance ?? 0n, 'USD'),
       failureReason: card.failureReason,
+      topupAddresses: CARD_TOPUP_ROUTES.flatMap(route => card.topupAddresses?.[route.key]
+        ? [{ asset: route.asset, network: route.network, address: card.topupAddresses[route.key]! }] : []),
       pendingOperationId: pendingIssue?.id ?? null,
+      pendingFulfillmentMode: pendingIssue ? pendingIssue.fulfillmentMode === 'manual' ? 'manual' : 'automatic' : null,
       pendingOperationStatus: pendingIssue?.status === 'pending' || pendingIssue?.status === 'processing' || pendingIssue?.status === 'unknown' ? pendingIssue.status : null,
       issueRestriction: pendingIssue ? await this.issueRestriction(pendingIssue) : null,
       createdAt: card.createdAt.toISOString(),
@@ -404,8 +424,6 @@ export class CardService {
       }
     }
 
-    const fee = convertMinor(this.issueFeeUsd, 'USD', input.asset);
-
     try {
       const opId = await this.db.transaction(async (tx) => {
         // Сериализуем разные ключи выпуска одного пользователя перед проверкой лимита.
@@ -437,52 +455,10 @@ export class CardService {
           if (!pending.sponsorshipId) await tx.insert(cardOperationRequestAliases).values({ userId, idempotencyKey: input.idempotencyKey, operationId: pending.id });
           return pending.id;
         }
-        const sponsored = await this.canSponsor(tx, userId, input.asset, grant);
-        this.assertIssueConsent(input, sponsored ? 'broker' : 'wallet', sponsored ? 0n : fee);
-        const reservedFee = sponsored ? convertMinor(grant!.budgetUsd, 'USD', 'USDT') : fee;
-        if (sponsored) await tx.execute(sql`select set_config('gudex.sponsorship_v1', 'true', true), set_config('gudex.sponsorship_v2', 'true', true)`);
-        const live = await tx
-          .select({ id: cards.id })
-          .from(cards)
-          .where(and(eq(cards.userId, userId), inArray(cards.status, [...LIVE_STATUSES])));
-        if (live.length >= this.config.MAX_CARDS_PER_USER) throw new AppError('card_limit', 'Card limit reached');
-
-        const [card] = await tx
-          .insert(cards)
-          .values({
-            userId,
-            productName: this.config.CARD_PRODUCT_NAME,
-            status: 'pending',
-            holderName: `${kyc.firstName} ${kyc.lastName}`,
-          })
-          .returning();
-        const [op] = await tx
-          .insert(cardOperations)
-          .values({
-            userId,
-            cardId: card!.id,
-            type: 'issue',
-            partnerProvider: this.config.CARD_PARTNER,
-            fulfillmentMode: manual ? 'manual' : 'automatic',
-            sponsorshipId: sponsored ? grant!.id : null,
-            idempotencyKey: input.idempotencyKey,
-            asset: input.asset,
-            amount: reservedFee,
-            fee: reservedFee,
-          })
-          .returning();
-        await post(tx, {
-          kind: 'card_issue_hold',
-          reference: `card_issue_hold:${op!.id}`,
-          postings: move(sponsored ? accounts.brokerIssueExpense() : accounts.userWallet(userId, input.asset), accounts.clearing(input.asset), reservedFee),
-        });
-        if (sponsored) {
-          const [reserved] = await tx.update(cardIssueSponsorships).set({ operationId: op!.id, updatedAt: new Date() }).where(and(eq(cardIssueSponsorships.id, grant!.id), isNull(cardIssueSponsorships.operationId), isNull(cardIssueSponsorships.consumedAt))).returning({ id: cardIssueSponsorships.id });
-          if (!reserved) throw new AppError('provider_unavailable', 'Broker issuance coverage is already reserved');
-        }
-        if (manual) await notifyAdmins(tx, this.config, { userId, eventKey: `issuance:${op!.id}`, stage: 'issuance' });
-        else await enqueue(tx, 'card.issue', { operationId: op!.id });
-        return op!.id;
+        const op = await this.createIssueReservation(tx, userId, input, `${kyc.firstName} ${kyc.lastName}`, grant, manual);
+        if (manual) await notifyAdmins(tx, this.config, { userId, eventKey: `issuance:${op.id}`, stage: 'issuance' });
+        else await enqueue(tx, 'card.issue', { operationId: op.id });
+        return op.id;
       });
       const op = await this.getOperation(userId, opId);
       return { card: await this.get(userId, op.cardId), operation: op };
@@ -493,6 +469,109 @@ export class CardService {
       }
       throw err;
     }
+  }
+
+  // Reserves the issuance fee (or the broker coverage) and creates the pending card and its operation.
+  private async createIssueReservation(tx: Tx, userId: string, input: IssueInput, holderName: string,
+    grant: SponsorshipRow | undefined, manual: boolean): Promise<OperationRow> {
+    const fee = convertMinor(this.issueFeeUsd, 'USD', input.asset);
+    const sponsored = await this.canSponsor(tx, userId, input.asset, grant);
+    this.assertIssueConsent(input, sponsored ? 'broker' : 'wallet', sponsored ? 0n : fee);
+    const reservedFee = sponsored ? convertMinor(grant!.budgetUsd, 'USD', 'USDT') : fee;
+    if (sponsored) await tx.execute(sql`select set_config('gudex.sponsorship_v1', 'true', true), set_config('gudex.sponsorship_v2', 'true', true)`);
+    const live = await tx
+      .select({ id: cards.id })
+      .from(cards)
+      .where(and(eq(cards.userId, userId), inArray(cards.status, [...LIVE_STATUSES])));
+    if (live.length >= this.maxCards) throw new AppError('card_limit', 'Card limit reached');
+
+    const [card] = await tx
+      .insert(cards)
+      .values({
+        userId,
+        productName: this.config.CARD_PRODUCT_NAME,
+        status: 'pending',
+        holderName,
+      })
+      .returning();
+    const [op] = await tx
+      .insert(cardOperations)
+      .values({
+        userId,
+        cardId: card!.id,
+        type: 'issue',
+        partnerProvider: this.config.CARD_PARTNER,
+        fulfillmentMode: manual ? 'manual' : 'automatic',
+        sponsorshipId: sponsored ? grant!.id : null,
+        idempotencyKey: input.idempotencyKey,
+        asset: input.asset,
+        amount: reservedFee,
+        fee: reservedFee,
+      })
+      .returning();
+    await post(tx, {
+      kind: 'card_issue_hold',
+      reference: `card_issue_hold:${op!.id}`,
+      postings: move(sponsored ? accounts.brokerIssueExpense() : accounts.userWallet(userId, input.asset), accounts.clearing(input.asset), reservedFee),
+    });
+    if (sponsored) {
+      const [reserved] = await tx.update(cardIssueSponsorships).set({ operationId: op!.id, updatedAt: new Date() }).where(and(eq(cardIssueSponsorships.id, grant!.id), isNull(cardIssueSponsorships.operationId), isNull(cardIssueSponsorships.consumedAt))).returning({ id: cardIssueSponsorships.id });
+      if (!reserved) throw new AppError('provider_unavailable', 'Broker issuance coverage is already reserved');
+    }
+    return op!;
+  }
+
+  /** Manual card application: reserves the fee in the caller's transaction, together with the new questionnaire.
+   * Nothing is sent to the partner; an administrator issues the card and links it. */
+  async reserveManualApplication(tx: Tx, userId: string, input: IssueInput, holderName: string): Promise<OperationRow> {
+    if (this.config.CARD_ISSUANCE_MODE !== 'manual') throw new AppError('validation', 'Manual issuance is disabled');
+    const [user] = await tx.select().from(users).where(eq(users.id, userId)).for('update');
+    if (!user) throw new AppError('unauthorized', 'User not found');
+    if (await this.findByKey(userId, input.idempotencyKey, tx)) throw new AppError('validation', 'Use a new key for a new card application');
+    const [open] = await tx.select({ id: cardOperations.id }).from(cardOperations).where(and(eq(cardOperations.userId, userId),
+      eq(cardOperations.type, 'issue'), inArray(cardOperations.status, ['pending', 'processing', 'unknown']))).limit(1);
+    if (open) throw new AppError('validation', 'A card issuance is already in progress');
+    const [grant] = await tx.select().from(cardIssueSponsorships).where(and(eq(cardIssueSponsorships.telegramId, user.telegramId), isNull(cardIssueSponsorships.retryOfOperationId))).for('update');
+    if (grant?.operationId && !grant.consumedAt) throw new AppError('provider_unavailable', 'An earlier broker-paid issuance requires reconciliation');
+    return this.createIssueReservation(tx, userId, input, holderName, grant, true);
+  }
+
+  /** Whether the fee can be reserved now (enough balance in this asset, or broker coverage), under the caller's user lock. */
+  async canReserveManualApplication(tx: Tx, userId: string, asset: WalletAsset): Promise<boolean> {
+    const [user] = await tx.select().from(users).where(eq(users.id, userId));
+    if (!user) return false;
+    const [open] = await tx.select({ id: cardOperations.id }).from(cardOperations).where(and(eq(cardOperations.userId, userId),
+      eq(cardOperations.type, 'issue'), inArray(cardOperations.status, ['pending', 'processing', 'unknown']))).limit(1);
+    if (open) return false;
+    const live = await tx.select({ id: cards.id }).from(cards).where(and(eq(cards.userId, userId), inArray(cards.status, [...LIVE_STATUSES])));
+    if (live.length >= this.maxCards) return false;
+    const [grant] = await tx.select().from(cardIssueSponsorships).where(and(eq(cardIssueSponsorships.telegramId, user.telegramId), isNull(cardIssueSponsorships.retryOfOperationId)));
+    if (await this.canSponsor(tx, userId, asset, grant)) return true;
+    return await getBalance(tx, accounts.userWallet(userId, asset).code) >= convertMinor(this.issueFeeUsd, 'USD', asset);
+  }
+
+  /** Cancels this user's pending manual issuance in the caller's transaction and returns the reserve. */
+  async cancelManualApplication(tx: Tx, userId: string, reason: string): Promise<{ operationId: string; amount: string; asset: string; sponsored: boolean }[]> {
+    const pending = await tx.select().from(cardOperations).where(and(eq(cardOperations.userId, userId), eq(cardOperations.type, 'issue'),
+      eq(cardOperations.fulfillmentMode, 'manual'), eq(cardOperations.status, 'pending'))).for('update');
+    const refunds: { operationId: string; amount: string; asset: string; sponsored: boolean }[] = [];
+    for (const op of pending) {
+      if (op.sponsorshipId) await tx.execute(sql`select set_config('gudex.sponsorship_v1', 'true', true), set_config('gudex.sponsorship_v2', 'true', true)`);
+      const refund = await this.refundInTx(tx, op, reason, false);
+      if (refund) refunds.push({ operationId: op.id, ...refund });
+    }
+    return refunds;
+  }
+
+  /** The client's issuance that is still being prepared, if any. */
+  async openIssueOperation(userId: string): Promise<OperationRow[]> {
+    return this.db.select().from(cardOperations).where(and(eq(cardOperations.userId, userId), eq(cardOperations.type, 'issue'),
+      inArray(cardOperations.status, ['pending', 'processing']))).orderBy(desc(cardOperations.createdAt)).limit(1);
+  }
+
+  async findIssueOperation(userId: string, idempotencyKey: string): Promise<OperationDto | null> {
+    const op = await this.findByKey(userId, idempotencyKey);
+    return op ? operationDto(op) : null;
   }
 
   async quoteTopup(asset: WalletAsset, amount: string, userId?: string, cardId?: string): Promise<TopupQuoteDto> {
@@ -512,7 +591,7 @@ export class CardService {
     if (!userId || !cardId) return this.minTopupUsd;
     const card = await this.ownedCard(userId, cardId);
     if (!card.partnerCardId || card.status !== 'active') throw new AppError('card_not_active', 'Card is not active');
-    if (!this.partner.getRechargeMinimum) return this.minTopupUsd;
+    if (!this.partner.getRechargeMinimum || this.manual) return this.minTopupUsd;
     const net = await this.partner.getRechargeMinimum(card.partnerCardId);
     const denominator = 10_000n - BigInt(this.config.CARD_TOPUP_FEE_BPS);
     if (net <= 0n || denominator <= 0n) throw new AppError('provider_unavailable', 'Card top-up tariff is unavailable');
@@ -543,6 +622,8 @@ export class CardService {
   ): Promise<OperationDto> {
     const existing = await this.findByKey(userId, input.idempotencyKey);
     if (existing) return operationDto(existing);
+    // Manual issuance: the client tops the card up from a personal wallet (not built yet), never through the bot.
+    if (this.manual) throw new AppError('provider_unavailable', 'Card top-up will be available with the personal wallet');
     this.partner.assertWriteReady?.();
 
     const card = await this.ownedCard(userId, cardId);
@@ -593,6 +674,7 @@ export class CardService {
   async setFrozen(userId: string, cardId: string, frozen: boolean, idempotencyKey: string): Promise<OperationDto> {
     const existing = await this.findByKey(userId, idempotencyKey);
     if (existing) return operationDto(existing);
+    // Freezing is done by the bot right away, also with manual issuance.
     this.partner.assertWriteReady?.();
 
     const card = await this.ownedCard(userId, cardId);
@@ -600,6 +682,16 @@ export class CardService {
 
     return this.createOperation(userId, idempotencyKey, async (tx) => {
       await this.assertNoUnknownCardOperation(tx, cardId);
+      // A change already on its way is followed, never sent to the partner a second time.
+      const [inFlight] = await tx.select().from(cardOperations).where(and(eq(cardOperations.cardId, cardId),
+        inArray(cardOperations.type, ['freeze', 'unfreeze']), inArray(cardOperations.status, ['pending', 'processing']))).limit(1);
+      if (inFlight) {
+        if (inFlight.type === (frozen ? 'freeze' : 'unfreeze')) return inFlight;
+        throw new AppError('validation', 'The card status is already changing; try again in a minute');
+      }
+      // Read again under the card lock: another request may have changed the card meanwhile.
+      const [locked] = await tx.select({ status: cards.status }).from(cards).where(eq(cards.id, cardId));
+      if (locked?.status !== (frozen ? 'active' : 'frozen')) throw new AppError('card_not_active', `Card is ${locked?.status}`);
       const [op] = await tx
         .insert(cardOperations)
         .values({ userId, cardId, type: frozen ? 'freeze' : 'unfreeze', idempotencyKey, partnerProvider: this.config.CARD_PARTNER })
@@ -661,7 +753,7 @@ export class CardService {
       'card.status': {
         replaySafe: false,
         run: ({ operationId }: P, context) => this.runStatus(operationId, context),
-        onExhausted: ({ operationId }: P) => this.markUnknown(operationId),
+        onExhausted: ({ operationId }: P) => this.scheduleStatusCheck(operationId, 30),
       },
       'card.sync': { run: ({ cardId }: { cardId: string }) => this.syncTransactions(cardId) },
       'card.reconcile': { run: async ({ operationId }: P) => {
@@ -684,6 +776,7 @@ export class CardService {
           }
           return;
         }
+        if (current.type === 'freeze' || current.type === 'unfreeze') return this.reconcileStatusChange(current);
         const op = await this.reconcileUnknown(operationId);
         if (op.status === 'processing') {
           if (Date.now() - new Date(op.createdAt).getTime() > 30 * 60_000) await this.markUnknown(operationId);
@@ -700,7 +793,7 @@ export class CardService {
       const [op] = await tx.select().from(cardOperations).where(eq(cardOperations.id, operationId)).for('update');
       if (!op) throw new PermanentJobError(`Operation ${operationId} not found`);
       if (TERMINAL.includes(op.status)) return null;
-      if (op.type === 'issue' && op.fulfillmentMode === 'manual') return null;
+      if (op.fulfillmentMode === 'manual') return null;
       if (op.sponsorshipId) await tx.execute(sql`select set_config('gudex.sponsorship_v1', 'true', true), set_config('gudex.sponsorship_v2', 'true', true)`);
       if (op.partnerProvider !== this.config.CARD_PARTNER) {
         await tx.update(cardOperations).set({ status: 'unknown', error: 'Operation provider differs from the active integration; manual reconciliation required', updatedAt: new Date() }).where(eq(cardOperations.id, op.id));
@@ -783,24 +876,48 @@ export class CardService {
     }
   }
 
+  // beforeSettle runs first in the same transaction (the combined application approves the questionnaire there).
   async completeManualIssue(actorUserId: string, userId: string, operationId: string,
     issued: Awaited<ReturnType<CardPartner['issueCard']>>, receipt: { grossUsd: bigint; orderNo: string;
-      partnerCustomerId: string; submissionId: string; productId: string; operationUpdatedAt: string; receiptRecordId?: string }): Promise<void> {
+      partnerCustomerId: string; submissionId: string; productId: string; operationUpdatedAt: string; receiptRecordId?: string },
+    beforeSettle?: (tx: Tx) => Promise<void>): Promise<void> {
     const [actor] = await this.db.select({ telegramId: users.telegramId }).from(users).where(eq(users.id, actorUserId));
     if (!actor || !this.config.adminTelegramIds.includes(actor.telegramId.toString())) throw new AppError('forbidden', 'Administrator access required');
     if (this.config.CARD_ISSUANCE_MODE !== 'manual') throw new AppError('validation', 'Manual issuance is disabled');
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(receipt.orderNo) || !/^[A-Za-z0-9_-]{1,128}$/.test(issued.partnerCardId)
       || receipt.receiptRecordId !== undefined && !/^[A-Za-z0-9_-]{1,128}$/.test(receipt.receiptRecordId)
       || typeof receipt.grossUsd !== 'bigint' || receipt.grossUsd < 0n) throw new AppError('validation', 'Invalid issuance receipt');
-    await this.completeIssue(operationId, issued, { actorUserId, userId, ...receipt });
+    await this.completeIssue(operationId, issued, { actorUserId, userId, ...receipt, beforeSettle });
+  }
+
+  /** An operator performed this top-up or freeze in the UPay panel (or declined it) and records the outcome. */
+  async resolveManualRequest(actorUserId: string, userId: string, operationId: string,
+    outcome: { done: true } | { done: false; reason: string }): Promise<void> {
+    const [actor] = await this.db.select({ telegramId: users.telegramId }).from(users).where(eq(users.id, actorUserId));
+    if (!actor || !this.config.adminTelegramIds.includes(actor.telegramId.toString())) throw new AppError('forbidden', 'Administrator access required');
+    if (!this.manual) throw new AppError('validation', 'Manual card requests are disabled');
+    const [op] = await this.db.select().from(cardOperations).where(and(eq(cardOperations.id, operationId), eq(cardOperations.userId, userId)));
+    if (!op || op.fulfillmentMode !== 'manual' || op.status !== 'pending' || !['topup', 'freeze', 'unfreeze'].includes(op.type)) {
+      throw new AppError('validation', 'Эта заявка уже обработана. Обновите страницу.');
+    }
+    if (!outcome.done) {
+      const reason = outcome.reason.trim();
+      if (!reason || reason.length > 300) throw new AppError('validation', 'Укажите причину отказа');
+      await this.failWithRefund(op.id, reason);
+    } else if (op.type === 'topup') await this.completeTopup(op.id, await this.ownedCard(userId, op.cardId), true);
+    else await this.completeStatus(op.id, op.type === 'freeze');
+    await this.db.insert(adminAuditLog).values({ actorUserId, targetUserId: userId, action: outcome.done ? 'card_request_done' : 'card_request_reject',
+      reference: op.id, metadata: { type: op.type } }).onConflictDoNothing();
   }
 
   private async completeIssue(operationId: string, issued: Awaited<ReturnType<CardPartner['issueCard']>>,
     manual?: { actorUserId: string; userId: string; grossUsd: bigint; orderNo: string;
-      partnerCustomerId: string; submissionId: string; productId: string; operationUpdatedAt: string; receiptRecordId?: string }): Promise<void> {
+      partnerCustomerId: string; submissionId: string; productId: string; operationUpdatedAt: string; receiptRecordId?: string;
+      beforeSettle?: (tx: Tx) => Promise<void> }): Promise<void> {
     const settlement = manual ?? await this.partner.getIssueSettlement?.(operationId);
     await this.finish(operationId, async (tx, op) => {
       if (manual) {
+        if (op.userId === manual.userId) await manual.beforeSettle?.(tx);
         const [profile] = await tx.select().from(kycProfiles).where(eq(kycProfiles.userId, manual.userId)).for('update');
         if (op.userId !== manual.userId || op.type !== 'issue' || op.fulfillmentMode !== 'manual' || op.status !== 'pending' || op.attempts !== 0
           || op.partnerProvider !== this.config.CARD_PARTNER || profile?.status !== 'approved' || profile.partnerProvider !== this.config.CARD_PARTNER
@@ -909,8 +1026,9 @@ export class CardService {
     }
   }
 
-  private async completeTopup(operationId: string, card: CardRow): Promise<void> {
-    const settlement = await this.partner.getRechargeSettlement?.(operationId);
+  private async completeTopup(operationId: string, card: CardRow, manual = false): Promise<void> {
+    // An operator top-up has no partner receipt here: the reserved fee is the margin.
+    const settlement = manual ? undefined : await this.partner.getRechargeSettlement?.(operationId);
     await this.finish(operationId, async (tx, op) => {
       const asset = op.asset as WalletAsset;
       const cost = settlement ? convertMinor(settlement.grossUsd, 'USD', asset) : op.amount! - op.fee!;
@@ -937,7 +1055,7 @@ export class CardService {
     const started = await this.startOperation(operationId);
     if (!started) return;
     const { op, card } = started;
-    if (!started.canSubmit) return this.recoverInterrupted(operationId);
+    if (!started.canSubmit) return this.scheduleStatusCheck(operationId, 0);
     if (!card.partnerCardId) {
       await this.failWithRefund(operationId, 'Card has no partner id');
       return;
@@ -946,11 +1064,51 @@ export class CardService {
     try {
       await context?.assertActive();
       const beforeSubmit = context ? () => context.assertActive() : undefined;
-      await (freeze ? this.partner.freezeCard(card.partnerCardId, op.id, beforeSubmit) : this.partner.unfreezeCard(card.partnerCardId, op.id, beforeSubmit));
+      // The card state is then confirmed from this customer's card list only.
+      const [kyc] = await this.db.select({ customerNo: kycProfiles.partnerCustomerId }).from(kycProfiles).where(eq(kycProfiles.userId, op.userId));
+      const customerNo = kyc?.customerNo ?? undefined;
+      await (freeze ? this.partner.freezeCard(card.partnerCardId, op.id, beforeSubmit, customerNo) : this.partner.unfreezeCard(card.partnerCardId, op.id, beforeSubmit, customerNo));
       await this.completeStatus(operationId, freeze);
     } catch (error) {
-      await this.handleSubmitError(operationId, error);
+      // An explicit refusal ends it; any other outcome is checked on the card list, the request is never sent again.
+      if (error instanceof PartnerError && !error.retryable) await this.failWithRefund(operationId, error.message);
+      else await this.scheduleStatusCheck(operationId, error instanceof PartnerPendingError ? error.delaySeconds : 30);
     }
+  }
+
+  private async scheduleStatusCheck(operationId: string, delaySeconds: number): Promise<void> {
+    await this.finish(operationId, async (tx, op) => {
+      await tx.update(cardOperations).set({ status: 'processing', error: null, updatedAt: new Date() }).where(eq(cardOperations.id, op.id));
+      await enqueue(tx, 'card.reconcile', { operationId }, { runAt: new Date(Date.now() + delaySeconds * 1000), dedupeKey: `card.reconcile:${operationId}` });
+    });
+  }
+
+  // The state as this customer's card list shows it: the only card read the bot may make with manual issuance.
+  private async readCardState(op: OperationRow): Promise<'active' | 'frozen' | null> {
+    const [card] = await this.db.select().from(cards).where(eq(cards.id, op.cardId));
+    if (!card?.partnerCardId || !this.partner.getCardState) return null;
+    const [kyc] = await this.db.select({ customerNo: kycProfiles.partnerCustomerId }).from(kycProfiles).where(eq(kycProfiles.userId, op.userId));
+    return this.partner.getCardState(card.partnerCardId, kyc?.customerNo ?? undefined);
+  }
+
+  /** Time since the request was actually sent to the partner (or since the operation was created if it never was). */
+  private async statusChangeAge(op: OperationRow): Promise<number> {
+    const [sent] = await this.db.select({ createdAt: upaySubmissions.createdAt }).from(upaySubmissions).where(eq(upaySubmissions.reference, op.id));
+    return Math.max(0, Date.now() - (sent?.createdAt ?? op.createdAt).getTime());
+  }
+
+  /** Completes a freeze or unfreeze when the card list shows it, ends it when the list still shows the old state
+   * a while after sending (nothing to refund, the client may try again), and keeps checking while the list cannot be read.
+   * After a day without any answer it ends as well, so the card is never blocked for good. */
+  private async reconcileStatusChange(op: OperationRow): Promise<void> {
+    const frozen = op.type === 'freeze';
+    let state: 'active' | 'frozen' | null = null;
+    try { state = await this.readCardState(op); } catch { state = null; }
+    if (state === (frozen ? 'frozen' : 'active')) return this.completeStatus(op.id, frozen);
+    const age = await this.statusChangeAge(op);
+    if (state !== null && age >= STATUS_CONFIRM_MS) return this.failWithRefund(op.id, 'The card state did not change');
+    if (age >= STATUS_GIVE_UP_MS) return this.failWithRefund(op.id, 'The card state could not be confirmed');
+    throw new RetryLater(age < 5 * 60_000 ? 30 : 300);
   }
 
   private async completeStatus(operationId: string, frozen: boolean): Promise<void> {
@@ -1009,13 +1167,12 @@ export class CardService {
         } else if (op.type === 'topup' && (await this.partner.isRechargeDone(op.id))) {
           const [card] = await this.db.select().from(cards).where(eq(cards.id, op.cardId));
           if (card) await this.completeTopup(op.id, card);
-        } else if ((op.type === 'freeze' || op.type === 'unfreeze') && this.partner.getCardState) {
-          const [card] = await this.db.select().from(cards).where(eq(cards.id, op.cardId));
-          if (card?.partnerCardId) {
-            const state = await this.partner.getCardState(card.partnerCardId);
-            const frozen = op.type === 'freeze';
-            if (state === (frozen ? 'frozen' : 'active')) await this.completeStatus(op.id, frozen);
-          }
+        } else if (op.type === 'freeze' || op.type === 'unfreeze') {
+          const frozen = op.type === 'freeze';
+          const state = await this.readCardState(op);
+          if (state === (frozen ? 'frozen' : 'active')) await this.completeStatus(op.id, frozen);
+          // No money moves here: a change the card list still does not show long after sending is ended for a new try.
+          else if (state !== null && await this.statusChangeAge(op) >= STATUS_CONFIRM_MS) await this.failWithRefund(op.id, 'The card state did not change');
         }
       } catch (error) {
         if (error instanceof UpayNotDispatchedError) await this.failWithRefund(op.id, error.message);
@@ -1029,34 +1186,38 @@ export class CardService {
   // ВАЖНО для настоящего партнёра: сюда можно попасть только когда точно известно, что операция
   // у партнёра не прошла (иначе — ручной разбор). Адаптер должен отличать «отказ» от «неизвестно».
   private async failWithRefund(operationId: string, reason: string): Promise<void> {
-    await this.finish(operationId, async (tx, op) => {
-      const sponsor = op.sponsorshipId ? await this.requireSponsorship(tx, op) : null;
-      // Заморозка/разморозка денег не резервирует — у них asset и amount пустые.
-      if (op.asset && op.amount !== null) {
-        const asset = op.asset as WalletAsset;
-        await post(tx, {
-          kind: `card_${op.type}_refund`,
-          reference: `card_${op.type}_refund:${op.id}`,
-          postings: move(accounts.clearing(asset), sponsor ? accounts.brokerIssueExpense() : accounts.userWallet(op.userId, asset), op.amount),
-        });
-      }
-      if (sponsor) {
-        const [released] = await tx.update(cardIssueSponsorships).set({ operationId: null, updatedAt: new Date() })
-          .where(and(eq(cardIssueSponsorships.id, sponsor.id), eq(cardIssueSponsorships.operationId, op.id), isNull(cardIssueSponsorships.consumedAt))).returning({ id: cardIssueSponsorships.id });
-        if (!released) throw new PartnerError('Broker issuance coverage no longer matches the rejected operation', true);
-      }
-      if (op.type === 'issue') {
-        await tx.update(cards).set({ status: 'failed', failureReason: reason, updatedAt: new Date() }).where(eq(cards.id, op.cardId));
-      }
-      await tx
-        .update(cardOperations)
-        .set({ status: 'failed', error: reason, updatedAt: new Date() })
-        .where(eq(cardOperations.id, op.id));
-      if ((op.type === 'issue' || op.type === 'topup') && op.asset && op.amount !== null) {
-        const refund = { amount: sponsor ? '0' : fromMinor(op.amount, op.asset as WalletAsset), asset: op.asset };
-        await notify(tx, op.userId, op.type === 'issue' ? { type: 'card_failed', ...refund, ...(sponsor ? { sponsored: true, additionalAttempt: Boolean(sponsor.retryOfOperationId) } : {}) } : { type: 'topup_failed', ...refund });
-      }
-    });
+    await this.finish(operationId, async (tx, op) => { await this.refundInTx(tx, op, reason, true); });
+  }
+
+  private async refundInTx(tx: Tx, op: OperationRow, reason: string, sendNotice: boolean): Promise<{ amount: string; asset: string; sponsored: boolean } | null> {
+    const sponsor = op.sponsorshipId ? await this.requireSponsorship(tx, op) : null;
+    // Заморозка/разморозка денег не резервирует — у них asset и amount пустые.
+    if (op.asset && op.amount !== null) {
+      const asset = op.asset as WalletAsset;
+      await post(tx, {
+        kind: `card_${op.type}_refund`,
+        reference: `card_${op.type}_refund:${op.id}`,
+        postings: move(accounts.clearing(asset), sponsor ? accounts.brokerIssueExpense() : accounts.userWallet(op.userId, asset), op.amount),
+      });
+    }
+    if (sponsor) {
+      const [released] = await tx.update(cardIssueSponsorships).set({ operationId: null, updatedAt: new Date() })
+        .where(and(eq(cardIssueSponsorships.id, sponsor.id), eq(cardIssueSponsorships.operationId, op.id), isNull(cardIssueSponsorships.consumedAt))).returning({ id: cardIssueSponsorships.id });
+      if (!released) throw new PartnerError('Broker issuance coverage no longer matches the rejected operation', true);
+    }
+    if (op.type === 'issue') {
+      await tx.update(cards).set({ status: 'failed', failureReason: reason, updatedAt: new Date() }).where(eq(cards.id, op.cardId));
+    }
+    await tx
+      .update(cardOperations)
+      .set({ status: 'failed', error: reason, updatedAt: new Date() })
+      .where(eq(cardOperations.id, op.id));
+    if (!(op.type === 'issue' || op.type === 'topup') || !op.asset || op.amount === null) return null;
+    const refund = { amount: sponsor ? '0' : fromMinor(op.amount, op.asset as WalletAsset), asset: op.asset };
+    if (sendNotice) {
+      await notify(tx, op.userId, op.type === 'issue' ? { type: 'card_failed', ...refund, ...(sponsor ? { sponsored: true, additionalAttempt: Boolean(sponsor.retryOfOperationId) } : {}) } : { type: 'topup_failed', ...refund });
+    }
+    return { ...refund, sponsored: Boolean(sponsor) };
   }
 
   // Подтягивает новые транзакции по карте у партнёра и проводит их по леджеру.
@@ -1064,7 +1225,10 @@ export class CardService {
     const [card] = await this.db.select().from(cards).where(eq(cards.id, cardId));
     if (!card?.partnerCardId) return;
     const transactions = await this.partner.listTransactions(card.partnerCardId);
-    await this.db.update(cards).set({ lastSyncedAt: new Date() }).where(eq(cards.id, card.id));
+    // UPay's own card balance is what the client sees; the local ledger stays an accounting estimate.
+    const partnerBalance = await this.readPartnerBalance(card);
+    await this.db.update(cards).set({ lastSyncedAt: new Date(),
+      ...(partnerBalance !== null ? { partnerBalance, partnerBalanceAt: new Date() } : {}) }).where(eq(cards.id, card.id));
     for (const t of transactions) {
       await this.db.transaction(async (tx) => {
         const [created] = await tx
@@ -1092,16 +1256,18 @@ export class CardService {
           postings,
           metadata: { merchant: t.merchant },
         });
+        // Purchases are shown in the Mini App (history and an in-app notice), not as Telegram messages.
         await tx.update(cardTransactions).set({ ledgerTransactionId: transactionId }).where(eq(cardTransactions.id, created.id));
-        await notify(tx, card.userId, {
-          type: t.kind === 'purchase' ? 'card_purchase' : 'card_refund',
-          last4: card.last4 ?? '',
-          merchant: t.merchant,
-          amountUsd: fromMinor(t.amountUsd, 'USD'),
-          balanceUsd: fromMinor(await getBalance(tx, cardAccount.code), 'USD'),
-        });
       });
     }
+  }
+
+  private async readPartnerBalance(card: CardRow): Promise<bigint | null> {
+    if (!this.partner.getCardBalance || !card.partnerCardId) return null;
+    const [kyc] = await this.db.select({ customerNo: kycProfiles.partnerCustomerId }).from(kycProfiles).where(eq(kycProfiles.userId, card.userId));
+    if (!kyc?.customerNo) return null;
+    try { return await this.partner.getCardBalance(card.partnerCardId, kyc.customerNo); }
+    catch { return null; }
   }
 
   private async enqueueSyncAll(): Promise<void> {

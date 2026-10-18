@@ -1,22 +1,23 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { and, count, desc, eq, inArray, ne, or, sql } from 'drizzle-orm';
-import { fromMinor, convertMinor, type WalletAsset } from '@gudex/shared';
+import { CARD_TOPUP_ROUTES, fromMinor, convertMinor, type CardTopupAddresses, type WalletAsset } from '@gudex/shared';
 import type { Config } from '../config';
-import type { Db, DbOrTx } from '../db/client';
+import type { Db, DbOrTx, Tx } from '../db/client';
 import { adminAuditLog, cardOperations, cards, jobs, kycDocuments, kycProfiles, users } from '../db/schema';
 import { DbKycDocumentStore, type KycDocumentKind } from '../kyc/document-store';
 import { AppError, isUniqueViolation } from '../lib/errors';
 import type { UpayClient } from '../partner/upay/client';
-import { decryptCardField, exactCents, expiry, identifier, object } from '../partner/upay/financial-protocol';
+import { exactCents, identifier, object } from '../partner/upay/financial-protocol';
 import type { PartnerCard } from '../partner/types';
 import type { CardService } from './cards';
 import { notify } from './notify';
 import { CardBillingService } from './card-billing';
+import { CardRequisitesVault, luhnValid } from './card-requisites';
 
 type Profile = typeof kycProfiles.$inferSelect;
 type ReadClient = Pick<UpayClient, 'readRequest' | 'loginInfo'>;
 type KycApproval = { submissionId: string; customerId: string; customerNo: string; documentsMatch: true };
-type CardBinding = { operationId: string; partnerCardId: string; orderNo: string };
+type CardBinding = { operationId: string; customerNo?: string; cardNumber: string; expiryMonth: number; expiryYear: number; cvv: string };
 const validUuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 function conflict(message = 'The application changed; refresh it before continuing'): never { throw new AppError('validation', message); }
 const fingerprint = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -45,16 +46,18 @@ export class ManualAdminService {
     const { page, limit } = input;
     if (!Number.isSafeInteger(page) || page < 1 || page > 100_000 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) conflict('Invalid application page');
     const hasCard = sql<boolean>`exists (select 1 from ${cardOperations} o where o.user_id = ${users.id} and o.type = 'issue' and o.status in ('pending','processing','unknown'))`;
-    const condition = or(inArray(kycProfiles.status, ['pending', 'unknown']), hasCard);
+    const hasRequest = sql<boolean>`exists (select 1 from ${cardOperations} o where o.user_id = ${users.id} and o.fulfillment_mode = 'manual' and o.type <> 'issue' and o.status = 'pending')`;
+    // A saved application appears only once paid (it then has a reserved issuance); before that there is nothing to do.
+    const condition = or(eq(kycProfiles.status, 'unknown'), and(eq(kycProfiles.status, 'pending'), ne(kycProfiles.submissionState, 'manual_review')), hasCard, hasRequest);
     const [totalRows, list] = await Promise.all([
       this.db.select({ value: count() }).from(users).leftJoin(kycProfiles, eq(kycProfiles.userId, users.id)).where(condition),
       this.db.select({ userId: users.id, telegramId: users.telegramId, firstName: kycProfiles.firstName, lastName: kycProfiles.lastName,
-        kycStatus: kycProfiles.status, submissionState: kycProfiles.submissionState, hasPendingCard: hasCard, createdAt: users.createdAt })
+        kycStatus: kycProfiles.status, submissionState: kycProfiles.submissionState, hasPendingCard: hasCard, hasCardRequest: hasRequest, createdAt: users.createdAt })
         .from(users).leftJoin(kycProfiles, eq(kycProfiles.userId, users.id)).where(condition).orderBy(desc(users.createdAt))
         .limit(limit).offset((page - 1) * limit),
     ]);
     return { items: list.map(row => ({ userId: row.userId, telegramId: String(row.telegramId), name: [row.firstName, row.lastName].filter(Boolean).join(' '),
-      kycStatus: row.kycStatus ?? 'none', submissionState: row.submissionState ?? 'none', hasPendingCard: row.hasPendingCard, createdAt: row.createdAt.toISOString() })),
+      kycStatus: row.kycStatus ?? 'none', submissionState: row.submissionState ?? 'none', hasPendingCard: row.hasPendingCard, hasCardRequest: row.hasCardRequest, createdAt: row.createdAt.toISOString() })),
     page, limit, total: totalRows[0]?.value ?? 0 };
   }
 
@@ -71,8 +74,12 @@ export class ManualAdminService {
     const documents = docIds.length ? await this.db.select({ id: kycDocuments.id, kind: kycDocuments.kind, mimeType: kycDocuments.mimeType,
       size: kycDocuments.size, expiresAt: kycDocuments.expiresAt }).from(kycDocuments)
       .where(and(eq(kycDocuments.userId, user.id), inArray(kycDocuments.id, docIds))) : [];
-    const billingAddress = await new CardBillingService(this.db, this.config).getSavedForAdmin(user.id);
+    const billingAddress = profile?.billingAddress ?? await new CardBillingService(this.db, this.config).getSavedForAdmin(user.id)
+      .then(address => address ? { ...address, countryName: null } : null);
+    const clientCards = await this.db.select({ id: cards.id, status: cards.status, last4: cards.last4, topupAddresses: cards.topupAddresses }).from(cards)
+      .where(and(eq(cards.userId, user.id), inArray(cards.status, ['pending', 'active', 'frozen']))).orderBy(desc(cards.createdAt));
     return { userId: user.id, telegramId: String(user.telegramId), username: user.username, createdAt: user.createdAt.toISOString(), billingAddress,
+      cards: clientCards.map(card => ({ id: card.id, status: card.status, last4: card.last4, topupAddresses: (card.topupAddresses ?? {}) as CardTopupAddresses })),
       kyc: profile ? { status: profile.status, submissionState: profile.submissionState, submissionId: profile.submissionId, firstName: profile.firstName,
         lastName: profile.lastName, email: profile.email, phone: profile.phone, globalCode: profile.globalCode, birthDate: profile.birthDate,
         citizenship: profile.citizenship, documentType: profile.documentType, documentCountry: profile.documentCountry,
@@ -83,6 +90,7 @@ export class ManualAdminService {
         fulfillmentMode: op.fulfillmentMode as 'automatic' | 'manual', asset: op.asset,
         amount: op.amount === null ? null : fromMinor(op.sponsorshipId ? 0n : op.amount, op.asset as WalletAsset),
         fee: op.fee === null ? null : fromMinor(op.sponsorshipId ? 0n : op.fee, op.asset as WalletAsset),
+        netUsd: op.netUsd === null ? null : fromMinor(op.netUsd, 'USD'),
         createdAt: op.createdAt.toISOString(), partnerCardId: card.partnerCardId, last4: card.last4 })) };
   }
 
@@ -104,12 +112,12 @@ export class ManualAdminService {
   private manualProfile(profile: Profile | undefined, submissionId: string): asserts profile is Profile {
     if (!profile || profile.submissionId !== submissionId || profile.partnerProvider !== 'upay' || profile.status !== 'pending' ||
       profile.submissionState !== 'manual_review' || profile.documentsSubmittedAt !== null) conflict();
-    if (!name(profile.firstName) || !name(profile.lastName) || !email(profile.email) || !['id_card', 'passport'].includes(profile.documentType ?? '')) conflict('Complete identity details are required');
+    if (!name(profile.firstName) || !name(profile.lastName) || !email(profile.email) || !['id_card', 'passport', 'driving_license'].includes(profile.documentType ?? '')) conflict('Complete identity details are required');
   }
 
   private async currentDocuments(profile: Profile, db: DbOrTx) {
     const ids = profile.documentIds;
-    if (!ids?.front || profile.documentType === 'id_card' && !ids.back) conflict('Current document photographs are required');
+    if (!ids?.front || profile.documentType !== 'passport' && !ids.back) conflict('Current document photographs are required');
     for (const [role, id] of Object.entries(ids!)) await this.documents.getOwned(profile.userId, id, role as KycDocumentKind, db);
   }
 
@@ -175,20 +183,34 @@ export class ManualAdminService {
     return this.client(actor, userId);
   }
 
-  async rejectKyc(actor: string, userId: string, input: { submissionId: string; reason: string }) {
+  /** Declines the current application: the questionnaire (if under review) and any reserved manual issuance. */
+  async rejectKyc(actor: string, userId: string, input: { submissionId?: string; reason: string }) {
     await this.assertAdmin(actor);
     const reason = input.reason.trim();
-    if (!reason || reason.length > 500) conflict('A rejection reason is required');
+    if (!reason || reason.length > 500) conflict('Укажите причину отказа');
     await this.db.transaction(async tx => {
       await this.assertAdmin(actor, tx);
       await tx.select({ id: users.id }).from(users).where(eq(users.id, userId)).for('update');
       const [current] = await tx.select().from(kycProfiles).where(eq(kycProfiles.userId, userId)).for('update');
-      this.manualProfile(current, input.submissionId);
-      await this.noActiveKycJobs(userId, tx);
-      await tx.insert(adminAuditLog).values({ actorUserId: actor, targetUserId: userId, action: 'manual_kyc_reject', reference: input.submissionId });
-      await tx.update(kycProfiles).set({ status: 'rejected', submissionState: 'none', rejectionReason: reason, reviewedAt: new Date(), updatedAt: new Date() }).where(eq(kycProfiles.userId, userId));
-      await this.documents.removeOwned(userId, Object.values(current.documentIds ?? {}), tx);
-      await notify(tx, userId, { type: 'kyc_rejected' });
+      const reviewing = current?.status === 'pending' && current.submissionState === 'manual_review';
+      if (reviewing) {
+        this.manualProfile(current, input.submissionId ?? '');
+        await this.noActiveKycJobs(userId, tx);
+      }
+      const refunds = await this.cardService.cancelManualApplication(tx, userId, reason);
+      if (!reviewing && !refunds.length) conflict('Нет заявки, которую можно отклонить. Обновите страницу.');
+      for (const refund of refunds) {
+        await tx.insert(adminAuditLog).values({ actorUserId: actor, targetUserId: userId, action: 'manual_application_cancel', reference: refund.operationId,
+          metadata: { amount: refund.amount, asset: refund.asset, sponsored: refund.sponsored } });
+      }
+      if (reviewing) {
+        await tx.insert(adminAuditLog).values({ actorUserId: actor, targetUserId: userId, action: 'manual_kyc_reject', reference: current.submissionId! });
+        await tx.update(kycProfiles).set({ status: 'rejected', submissionState: 'none', rejectionReason: reason, reviewedAt: new Date(), updatedAt: new Date() }).where(eq(kycProfiles.userId, userId));
+        await this.documents.removeOwned(userId, Object.values(current.documentIds ?? {}), tx);
+      }
+      const refund = refunds.at(-1);
+      await notify(tx, userId, { type: 'application_rejected', reason,
+        ...(refund ? { amount: refund.amount, asset: refund.asset, sponsored: refund.sponsored } : {}) });
     });
     return this.client(actor, userId);
   }
@@ -209,13 +231,21 @@ export class ManualAdminService {
     return conflict('Provider pagination is incomplete');
   }
 
-  async providerCards(actor: string, userId: string) {
+  // Cards of the stored verified customer, or of the customer the operator names for an application under review.
+  async providerCards(actor: string, userId: string, requestedCustomerNo?: string) {
     await this.assertAdmin(actor);
     const [profile] = await this.db.select().from(kycProfiles).where(eq(kycProfiles.userId, userId));
-    if (profile?.status !== 'approved' || profile.partnerProvider !== 'upay' || !profile.partnerCustomerId) conflict('A verified provider customer is required');
+    const reviewing = profile?.status === 'pending' && profile.submissionState === 'manual_review' && profile.partnerProvider === 'upay';
+    if (!reviewing && (profile?.status !== 'approved' || profile.partnerProvider !== 'upay' || !profile.partnerCustomerId)) conflict('Анкета клиента не готова к привязке карты');
+    if (reviewing && !identifier(requestedCustomerNo)) conflict('Укажите Customer No клиента в UPay');
+    const customerNo = reviewing ? requestedCustomerNo! : profile!.partnerCustomerId!;
+    if (reviewing) {
+      const foreign = await this.db.select({ userId: kycProfiles.userId }).from(kycProfiles).where(and(eq(kycProfiles.partnerCustomerId, customerNo), ne(kycProfiles.userId, userId)));
+      if (foreign.length) conflict('Этот клиент UPay уже привязан к другому пользователю GUDEX');
+    }
     const read = this.reader();
-    const rows = await this.pages(read, 'GET', '/card/list', { customerNo: profile.partnerCustomerId });
-    const selected = rows.filter(row => identifier(row.customerNo) === profile.partnerCustomerId && identifier(row.agentCustomerCardId));
+    const rows = await this.pages(read, 'GET', '/card/list', { customerNo });
+    const selected = rows.filter(row => identifier(row.customerNo) === customerNo && identifier(row.agentCustomerCardId));
     if (new Set(selected.map(row => identifier(row.agentCustomerCardId))).size !== selected.length) conflict('Provider card list contains conflicting identifiers');
     const [current] = await this.db.select().from(kycProfiles).where(eq(kycProfiles.userId, userId));
     if (!current || fingerprint(current) !== fingerprint(profile)) conflict();
@@ -227,63 +257,104 @@ export class ManualAdminService {
     });
   }
 
+  /** Links a card the operator issued in UPay. The operator types the card details; the server only finds
+   * this card in the customer's UPay card list (the one read the bot may do) and checks holder and state.
+   * When the questionnaire is still under review, its approval commits together with the card. */
+  /** The crypto addresses UPay gives this card for top-ups, typed by the operator. An empty value removes that route. */
+  async setTopupAddresses(actor: string, userId: string, cardId: string, input: CardTopupAddresses) {
+    await this.assertAdmin(actor);
+    const addresses: Record<string, string> = {};
+    for (const route of CARD_TOPUP_ROUTES) {
+      const value = input[route.key]?.trim() ?? '';
+      if (!value) continue;
+      const valid = route.network === 'TRC20' ? /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(value) : /^0x[0-9a-fA-F]{40}$/.test(value);
+      if (!valid) throw new AppError('validation', `Адрес ${route.asset} ${route.network} указан неверно`);
+      addresses[route.key] = value;
+    }
+    await this.db.transaction(async tx => {
+      await this.assertAdmin(actor, tx);
+      const [card] = await tx.select().from(cards).where(and(eq(cards.id, cardId), eq(cards.userId, userId))).for('update');
+      if (!card || !['pending', 'active', 'frozen'].includes(card.status)) throw new AppError('not_found', 'Card not found');
+      await tx.update(cards).set({ topupAddresses: Object.keys(addresses).length ? addresses : null, updatedAt: new Date() }).where(eq(cards.id, cardId));
+      await tx.insert(adminAuditLog).values({ actorUserId: actor, targetUserId: userId, action: 'card_topup_addresses', reference: `${cardId}:${randomUUID()}`,
+        metadata: { routes: Object.keys(addresses) } });
+    });
+    return this.client(actor, userId);
+  }
+
   async bindCard(actor: string, userId: string, input: CardBinding) {
     await this.assertAdmin(actor);
-    if (!identifier(input.partnerCardId) || !identifier(input.orderNo)) conflict('Exact card and receipt identifiers are required');
+    const pan = input.cardNumber.replace(/\s+/g, '');
+    const year = input.expiryYear < 100 ? 2000 + input.expiryYear : input.expiryYear;
+    const now = new Date();
+    if (!luhnValid(pan)) conflict('Проверьте номер карты: он введён с ошибкой');
+    if (!/^\d{3,4}$/.test(input.cvv)) conflict('CVV — это 3 или 4 цифры');
+    if (!Number.isInteger(input.expiryMonth) || input.expiryMonth < 1 || input.expiryMonth > 12 || !Number.isInteger(year)
+      || year > now.getUTCFullYear() + 15 || year * 12 + input.expiryMonth < now.getUTCFullYear() * 12 + now.getUTCMonth() + 1) conflict('Проверьте срок действия карты');
+    if (input.customerNo !== undefined && !identifier(input.customerNo)) conflict('Проверьте Customer No клиента в UPay');
     const [profile] = await this.db.select().from(kycProfiles).where(eq(kycProfiles.userId, userId));
     const [operation] = await this.db.select().from(cardOperations).where(and(eq(cardOperations.id, input.operationId), eq(cardOperations.userId, userId)));
-    if (!profile || profile.status !== 'approved' || profile.partnerProvider !== 'upay' || !profile.partnerCustomerId || !profile.submissionId ||
-      !operation || operation.type !== 'issue' || operation.fulfillmentMode !== 'manual' || operation.status !== 'pending' || operation.partnerProvider !== 'upay' || operation.fee === null || !operation.asset) conflict('Only a pending manual application with a verified customer can be fulfilled');
-    const [localCard] = await this.db.select().from(cards).where(and(eq(cards.id, operation.cardId), eq(cards.userId, userId)));
-    if (!localCard || localCard.status !== 'pending' || localCard.partnerCardId) conflict('The local card is no longer awaiting manual fulfilment');
-    const read = this.reader();
-    const detail = object(await read.read('GET', '/card/getAgentCustomerCardDetail', { query: { agentCustomerCardId: input.partnerCardId } }), 'card detail');
-    if (identifier(detail.agentCustomerCardId) !== input.partnerCardId || identifier(detail.customerNo) !== profile.partnerCustomerId ||
-      Number(detail.cardStatus ?? detail.state) !== 1) conflict('The provider card is not an active card of this verified customer');
-    let product = identifier(detail.agentCardId ?? detail.typeId), holder = name(detail.cardSignatureName);
-    if (!product || !holder) {
-      const list = await this.pages(read, 'GET', '/card/list', { customerNo: profile.partnerCustomerId });
-      const matches = list.filter(row => identifier(row.agentCustomerCardId) === input.partnerCardId && identifier(row.customerNo) === profile.partnerCustomerId);
-      if (matches.length !== 1) conflict('The provider card/product binding cannot be verified');
-      product ??= identifier(matches[0]!.agentCardId ?? matches[0]!.typeId);
-      holder ??= name(matches[0]!.cardSignatureName);
+    if (!operation || operation.type !== 'issue' || operation.fulfillmentMode !== 'manual' || operation.status !== 'pending' || operation.partnerProvider !== 'upay'
+      || operation.fee === null || !operation.asset) conflict('Привязать можно только оплаченную заявку, которая ждёт ручного выпуска');
+    const approving = profile?.status === 'pending' && profile.submissionState === 'manual_review';
+    if (approving) {
+      this.manualProfile(profile, profile.submissionId ?? '');
+      if (!input.customerNo) conflict('Укажите Customer No клиента в UPay');
+      await this.noActiveKycJobs(userId, this.db);
+      const foreign = await this.db.select({ userId: kycProfiles.userId }).from(kycProfiles)
+        .where(and(eq(kycProfiles.partnerCustomerId, input.customerNo!), ne(kycProfiles.userId, userId)));
+      if (foreign.length) conflict('Этот клиент UPay уже привязан к другому пользователю GUDEX');
+    } else if (!profile || profile.status !== 'approved' || profile.partnerProvider !== 'upay' || !profile.partnerCustomerId || !profile.submissionId
+      || input.customerNo !== undefined && input.customerNo !== profile.partnerCustomerId) {
+      conflict('Анкета клиента не готова к привязке карты. Обновите страницу.');
     }
-    if (product !== this.config.UPAY_PRODUCT_ID || holder !== name(`${profile.firstName ?? ''} ${profile.lastName ?? ''}`)) conflict('The card product or cardholder does not match the application');
-    const records = await this.pages(read, 'POST', '/card/getPageToCardOperateRecord', { operateType: 5, orderNo: input.orderNo });
-    const matches = records.filter(row => identifier(row.orderNo) === input.orderNo);
-    if (matches.length !== 1) conflict('The exact issuance receipt cannot be verified');
-    const receipt = matches[0]!;
-    const receiptCardId = identifier(receipt.agentCustomerCardId), receiptBrokerId = identifier(receipt.brokerCardId ?? receipt.cardId);
-    const detailBrokerId = identifier(detail.brokerCardId);
-    if (receipt.agentCustomerCardId !== undefined && receiptCardId !== input.partnerCardId ||
-      receipt.brokerCardId !== undefined && identifier(receipt.brokerCardId) !== detailBrokerId ||
-      receipt.cardId !== undefined && identifier(receipt.cardId) !== detailBrokerId) conflict('The receipt card identifiers conflict');
-    if (Number(receipt.status) !== 1 || identifier(receipt.customerNo) !== profile.partnerCustomerId || receipt.currency !== 'USDT' ||
-      !(receiptCardId === input.partnerCardId || receiptBrokerId !== null && receiptBrokerId === detailBrokerId)) conflict('The receipt does not prove issuance of this customer card');
-    let actualCost: bigint;
+    const customerNo = approving ? input.customerNo! : profile!.partnerCustomerId!;
+    const [localCard] = await this.db.select().from(cards).where(and(eq(cards.id, operation!.cardId), eq(cards.userId, userId)));
+    if (!localCard || localCard.status !== 'pending' || localCard.partnerCardId) conflict('Эта заявка уже не ждёт карту. Обновите страницу.');
+    const last4 = pan.slice(-4);
+    // The bot looks only at this Customer ID's card list: the customer's active card is the one to link.
+    const rows = await this.pages(this.reader(), 'GET', '/card/list', { customerNo });
+    const active = rows.filter(row => identifier(row.customerNo) === customerNo && identifier(row.agentCustomerCardId) && Number(row.state ?? row.cardStatus) === 1);
+    const linked = await this.db.select({ partnerCardId: cards.partnerCardId }).from(cards).where(inArray(cards.partnerCardId,
+      active.map(row => identifier(row.agentCustomerCardId)!).concat(['-'])));
+    const candidates = active.filter(row => !linked.some(card => card.partnerCardId === identifier(row.agentCustomerCardId)));
+    if (!candidates.length) conflict(`У Customer ID ${customerNo} в UPay нет новой активной карты. Выпустите карту и повторите.`);
+    const sameDigits = candidates.filter(row => typeof row.cardNumber === 'string' && row.cardNumber.replace(/\s+/g, '').endsWith(last4));
+    if (candidates.length > 1 && sameDigits.length !== 1) conflict(`У Customer ID ${customerNo} несколько новых карт; проверьте номер карты`);
+    const row = candidates.length === 1 ? candidates[0]! : sameDigits[0]!;
+    if (typeof row.cardNumber === 'string' && /\d{4}$/.test(row.cardNumber) && !row.cardNumber.replace(/\s+/g, '').endsWith(last4)) {
+      conflict(`Карта этого Customer ID в UPay заканчивается не на ${last4}. Проверьте номер карты.`);
+    }
+    const partnerCardId = identifier(row.agentCustomerCardId)!;
+    let balance: bigint | null = null;
+    try { balance = row.balance === undefined || row.symbol !== undefined && row.symbol !== 'USD' ? null : exactCents(row.balance, 'card balance'); } catch { balance = null; }
+    const issued: PartnerCard = { partnerCardId, last4, expiryMonth: input.expiryMonth, expiryYear: year };
+    const vault = new CardRequisitesVault(this.config.appSecret);
+    const beforeSettle = async (tx: Tx) => {
+      if (approving) {
+        await this.assertAdmin(actor, tx);
+        const [current] = await tx.select().from(kycProfiles).where(eq(kycProfiles.userId, userId)).for('update');
+        this.manualProfile(current, profile!.submissionId!);
+        if (fingerprint(current) !== fingerprint(profile)) conflict();
+        await this.noActiveKycJobs(userId, tx);
+        const foreign = await tx.select({ userId: kycProfiles.userId }).from(kycProfiles).where(and(eq(kycProfiles.partnerCustomerId, customerNo), ne(kycProfiles.userId, userId)));
+        if (foreign.length) conflict('Этот клиент UPay уже привязан к другому пользователю GUDEX');
+        await tx.insert(adminAuditLog).values({ actorUserId: actor, targetUserId: userId, action: 'manual_kyc_approve', reference: current.submissionId!,
+          metadata: { submissionId: current.submissionId, customerNo, approvedWith: 'card_link', partnerCardId } });
+        await tx.update(kycProfiles).set({ status: 'approved', submissionState: 'manual_verified', partnerCustomerId: customerNo,
+          documentsSubmittedAt: now, reviewedAt: now, rejectionReason: null, updatedAt: now }).where(eq(kycProfiles.userId, userId));
+        await this.documents.removeOwned(userId, Object.values(current.documentIds ?? {}), tx);
+      }
+      await tx.update(cards).set({ ...vault.seal(userId, operation!.cardId, { pan, cvv: input.cvv }),
+        ...(balance !== null ? { partnerBalance: balance, partnerBalanceAt: now } : {}) }).where(eq(cards.id, operation!.cardId));
+    };
     try {
-      const budget = convertMinor(operation.fee, operation.asset as WalletAsset, 'USD');
-      actualCost = exactCents(receipt.paymentAmount, 'manual issuance payment');
-      if (actualCost > budget || exactCents(receipt.openCardAmount, 'manual issuance fee') > budget || exactCents(receipt.rechargeAmount, 'manual initial recharge') !== 0n) conflict('The actual issuance cost exceeds the reserved fee or contains a recharge');
-    } catch (error) { if (error instanceof AppError) throw error; conflict('The receipt amounts cannot be verified'); }
-    const info = await read.loginInfo();
-    const accountId = identifier(detail.accountCardId);
-    if (!accountId || !info.iv) conflict('Authenticated card display metadata is unavailable');
-    let issued: PartnerCard;
-    try {
-      const expiryText = typeof detail.expirationTime === 'string' && /^(?:\d{2}\/\d{2,4}|\d{4}-\d{2}(?:-\d{2})?)$/.test(detail.expirationTime)
-        ? detail.expirationTime : decryptCardField(detail.expirationTime, accountId, info.iv);
-      const cardNumber = typeof detail.cardNumber === 'string' ? detail.cardNumber : '';
-      const visible = /[*xX]/.test(cardNumber) && /\d{4}$/.test(cardNumber) ? cardNumber : decryptCardField(cardNumber, accountId, info.iv);
-      const last4 = /\d{4}$/.exec(visible)?.[0];
-      if (!last4) conflict('The verified card display cannot be read');
-      issued = { partnerCardId: input.partnerCardId, last4, ...expiry(expiryText) };
-    } catch (error) { if (error instanceof AppError) throw error; conflict('The verified card display cannot be read'); }
-    try {
-      await this.cardService.completeManualIssue(actor, userId, operation.id, issued!, { grossUsd: actualCost!, orderNo: input.orderNo,
-        partnerCustomerId: profile.partnerCustomerId, submissionId: profile.submissionId, productId: this.config.UPAY_PRODUCT_ID, operationUpdatedAt: operation.updatedAt.toISOString(),
-        ...(identifier(receipt.id) ? { receiptRecordId: identifier(receipt.id)! } : {}) });
-    } catch (error) { if (isUniqueViolation(error)) conflict('This card or receipt is already assigned'); throw error; }
+      // No UPay receipt is read: the reserved fee is recorded as the issuance cost.
+      await this.cardService.completeManualIssue(actor, userId, operation!.id, issued, {
+        grossUsd: convertMinor(operation!.fee!, operation!.asset as WalletAsset, 'USD'), orderNo: `manual-${operation!.id}`,
+        partnerCustomerId: customerNo, submissionId: profile!.submissionId!, productId: this.config.UPAY_PRODUCT_ID,
+        operationUpdatedAt: operation!.updatedAt.toISOString() }, beforeSettle);
+    } catch (error) { if (isUniqueViolation(error)) conflict('Эта карта или клиент UPay уже привязаны к другой заявке'); throw error; }
     return this.client(actor, userId);
   }
 }

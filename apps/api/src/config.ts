@@ -47,6 +47,18 @@ const schema = z
     UPAY_KYC_ENABLED: flag('false'),
     UPAY_INVOICE_DEPOSITS_ENABLED: flag('false'),
     UPAY_KYC_REQUIRE_SELFIE: flag('false'),
+    // App wallet for the card issuance fee (public addresses only; the keys stay with the owner).
+    // Comma-separated pools: each address is lent to one client at a time for the fee payment.
+    APP_WALLET_TRON: z.string().regex(/^T[1-9A-HJ-NP-Za-km-z]{33}(?:,T[1-9A-HJ-NP-Za-km-z]{33})*$/).optional(),
+    APP_WALLET_EVM: z.string().regex(/^0x[0-9a-fA-F]{40}(?:,0x[0-9a-fA-F]{40})*$/).optional(),
+    FEE_ADDRESS_LEASE_MINUTES: z.coerce.number().int().min(5).max(1440).default(10),
+    FEE_ADDRESS_COOLDOWN_MINUTES: z.coerce.number().int().min(0).max(1440).default(60),
+    APP_WALLET_NETWORKS: z.string().default('TRC20,BEP20,ERC20,POLYGON'),
+    TRONGRID_URL: z.url().default('https://api.trongrid.io'),
+    TRONGRID_API_KEY: optional(),
+    BSC_RPC_URL: z.url().default('https://bsc-rpc.publicnode.com'),
+    ETH_RPC_URL: z.url().default('https://ethereum-rpc.publicnode.com'),
+    POLYGON_RPC_URL: z.url().default('https://polygon-bor-rpc.publicnode.com'),
     KYC_DOCUMENT_TTL_SECONDS: z.coerce.number().int().min(300).max(86400).default(86400),
     UPAY_DEVICE_ID: z.string().min(8).max(200).default('WEB-GUDEX-Automation/1'),
     UPAY_TIMEOUT_MS: z.coerce.number().int().min(1000).max(25000).default(8000),

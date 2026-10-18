@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router';
 import { AssetIcon } from '../components/AssetIcon';
 import { BankCard } from '../components/BankCard';
 import { Mascot } from '../components/Mascot';
-import { ActivityRow, KycBanner, ServiceNotice, TestModeBanner } from '../components/misc';
+import { ActivityRow, CardActivityNotice, KycBanner, ServiceNotice, TestModeBanner } from '../components/misc';
 import { ActionButton, Button, Page, QueryError, SectionTitle, Surface } from '../components/ui';
 import { useFormat } from '../lib/format';
 import { useActivity, useCards, useMe, useWallet } from '../lib/queries';
@@ -33,12 +33,13 @@ export function Home() {
       </div>
 
       <KycBanner />
+      <CardActivityNotice />
 
       {card ? (
-        <button className="link" style={{ color: 'inherit' }} onClick={() => navigate('/card')}>
+        <button className="link" style={{ color: 'inherit', display: 'block', width: '100%' }} onClick={() => navigate('/card')}>
           <BankCard card={card} />
         </button>
-      ) : clientReady && me.kyc.status === 'approved' ? (
+      ) : clientReady && ['none', 'rejected', 'approved'].includes(me.kyc.status) ? (
         <Surface className="promo">
           <div className="stack grow">
             <h2 className="heading">{t('home.getCardTitle')}</h2>

@@ -6,6 +6,7 @@ import type { Deps, Services } from '../app';
 import { users } from '../db/schema';
 import { AppError, parse } from '../lib/errors';
 import { MAX_KYC_UPLOAD_BYTES } from '../kyc/document-store';
+import { cardBillingInputSchema } from '../services/card-billing';
 import { requireAuth } from './guard';
 
 // Имя — латиницей, как в загранпаспорте: оно печатается на карте.
@@ -22,10 +23,33 @@ const kycBody = z.object({
   citizenship: z.string().regex(/^[A-Za-z]{2}$/),
   phone: z.string().regex(/^\d{7,15}$/).optional(),
   globalCode: z.string().regex(/^\+[1-9]\d{0,3}$/).optional(),
-  documentType: z.enum(['id_card', 'passport']).optional(),
+  documentType: z.enum(['id_card', 'passport', 'driving_license']).optional(),
   documentCountry: z.string().regex(/^[A-Za-z]{2}$/).optional(),
   documentIds: z.object({ front: z.uuid(), back: z.uuid().optional(), selfie: z.uuid().optional() }).optional(),
 });
+
+// Manual issuance: the same questionnaire, but contacts and photos are mandatory, plus billing and payment.
+const applicationBody = z.object({
+  kyc: kycBody.extend({
+    phone: z.string().regex(/^\d{7,15}$/),
+    globalCode: z.string().regex(/^\+[1-9]\d{0,3}$/),
+    documentType: z.enum(['id_card', 'passport', 'driving_license']),
+    documentCountry: z.string().regex(/^[A-Za-z]{2}$/),
+    documentIds: z.object({ front: z.uuid(), back: z.uuid().optional(), selfie: z.uuid().optional() }),
+  }).strict(),
+  billing: cardBillingInputSchema,
+  asset: z.enum(WALLET_ASSETS),
+  idempotencyKey: z.string().min(8).max(100),
+  expectedFundingSource: z.enum(['wallet', 'broker']).optional(),
+  expectedCustomerCharge: z.string().regex(/^\d+([.,]\d+)?$/).optional(),
+}).strict();
+
+function assertAdult(birthDate: string): void {
+  const birth = new Date(`${birthDate}T00:00:00Z`), now = new Date();
+  let age = now.getUTCFullYear() - birth.getUTCFullYear();
+  if (now.getUTCMonth() < birth.getUTCMonth() || now.getUTCMonth() === birth.getUTCMonth() && now.getUTCDate() < birth.getUTCDate()) age--;
+  if (!(age >= 18 && age < 120)) throw new AppError('validation', 'birthDate: must be 18+');
+}
 
 const documentUpload = z.object({
   kind: z.enum(['front', 'back', 'selfie']),
@@ -99,11 +123,33 @@ export const accountRoutes =
 
     app.post('/kyc', async (request) => {
       const body = parse(kycBody, request.body);
-      const birth = new Date(`${body.birthDate}T00:00:00Z`), now = new Date();
-      let age = now.getUTCFullYear() - birth.getUTCFullYear();
-      if (now.getUTCMonth() < birth.getUTCMonth() || now.getUTCMonth() === birth.getUTCMonth() && now.getUTCDate() < birth.getUTCDate()) age--;
-      if (!(age >= 18 && age < 120)) throw new AppError('validation', 'birthDate: must be 18+');
+      assertAdult(body.birthDate);
       return services.kyc.submit(request.userId, body);
+    });
+
+    app.get('/fee-payments/current', async (request, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      return services.feePayments.current(request.userId);
+    });
+
+    app.post('/fee-payments', async (request, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      const body = parse(z.object({ asset: z.enum(WALLET_ASSETS), network: z.enum(['TRC20', 'BEP20', 'ERC20', 'POLYGON']) }).strict(), request.body);
+      return services.feePayments.create(request.userId, body);
+    });
+
+    app.post('/card-application', async (request, reply) => {
+      const body = parse(applicationBody, request.body);
+      assertAdult(body.kyc.birthDate);
+      reply.header('Cache-Control', 'no-store');
+      reply.status(202);
+      return services.cardApplications.submit(request.userId, body);
+    });
+
+    app.post('/card-application/pay', async (request, reply) => {
+      const body = parse(z.object({ asset: z.enum(WALLET_ASSETS) }).strict(), request.body);
+      reply.header('Cache-Control', 'no-store');
+      return services.cardApplications.payFromBalance(request.userId, body.asset);
     });
 
     app.get('/wallet', async (request) => services.wallet.getWallet(request.userId));

@@ -24,6 +24,7 @@ const STATUS: Record<ErrorCode, number> = {
   recipient_not_found: 404,
   self_transfer: 422,
   provider_unavailable: 503,
+  payment_addresses_busy: 409,
   internal: 500,
 };
 

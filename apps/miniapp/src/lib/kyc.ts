@@ -1,7 +1,7 @@
-import type { KycDocumentDto, KycDto } from '@gudex/shared';
+import type { CardApplicationDto, CardBillingAddressInput, KycDocumentDto, KycDto, WalletAsset } from '@gudex/shared';
 import { ApiError, request } from './api';
 
-export type KycDocumentType = 'passport' | 'id_card';
+export type KycDocumentType = 'passport' | 'id_card' | 'driving_license';
 export type KycDocumentKind = 'front' | 'back' | 'selfie';
 export type KycImageError = 'fileType' | 'fileSize' | 'fileContent';
 
@@ -69,6 +69,26 @@ export async function kycImageBase64(file: File): Promise<string> {
   return btoa(chunks.join(''));
 }
 export async function sendKycSubmission({ documents, ...body }: KycSubmission, uploads: KycUploadCache = new Map()): Promise<KycDto> {
+  const documentIds = await uploadKycDocuments({ documents, ...body }, uploads);
+  return request<KycDto>('/v1/kyc', { method: 'POST', body: { ...body, ...(documents ? { documentIds } : {}) } });
+}
+
+export interface CardApplicationSubmission {
+  kyc: KycSubmission;
+  billing: CardBillingAddressInput;
+  asset: WalletAsset;
+  idempotencyKey: string;
+  expectedFundingSource?: 'wallet' | 'broker';
+  expectedCustomerCharge?: string;
+}
+
+// Manual issuance: photos first, then one request saves the questionnaire, address and reserved fee together.
+export async function sendCardApplication({ kyc: { documents, ...kyc }, ...rest }: CardApplicationSubmission, uploads: KycUploadCache = new Map()): Promise<CardApplicationDto> {
+  const documentIds = await uploadKycDocuments({ documents, ...kyc }, uploads);
+  return request<CardApplicationDto>('/v1/card-application', { method: 'POST', body: { ...rest, kyc: { ...kyc, documentIds } } });
+}
+
+async function uploadKycDocuments({ documents, ...body }: KycSubmission, uploads: KycUploadCache): Promise<Partial<Record<KycDocumentKind, string>>> {
   const kinds = ['front', 'back', 'selfie'] as const;
   if (!isKycBirthDateEligible(body.birthDate)) throw new ApiError('validation', 'Verification requires an eligible date of birth', 400);
   const live = body.phone !== undefined || body.globalCode !== undefined;
@@ -107,5 +127,5 @@ export async function sendKycSubmission({ documents, ...body }: KycSubmission, u
     }
     documentIds[kind] = uploaded.id;
   }
-  return request<KycDto>('/v1/kyc', { method: 'POST', body: { ...body, ...(documents ? { documentIds } : {}) } });
+  return documentIds;
 }

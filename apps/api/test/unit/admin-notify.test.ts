@@ -109,7 +109,7 @@ describe('administrator notification outbox', () => {
     expect(f.sendMessage).not.toHaveBeenCalled();
   });
 
-  it('sends only stable client identifiers and stage with an administrator link', async () => {
+  it('sends only stable client identifiers and stage, without a button', async () => {
     const f = fixture(['999']);
     await f.submit();
     await f.send(f.jobs[0]!.payload.notificationId);
@@ -118,7 +118,7 @@ describe('administrator notification outbox', () => {
     expect(text).toContain(f.user.id);
     expect(text).toContain('<code>42</code>');
     expect(text).toContain('Верификация');
-    expect(button).toEqual({ text: 'Открыть админку', url: 'https://gudex.test/admin' });
+    expect(button).toBeUndefined();
     for (const privateValue of ['PRIVATE_NAME', 'PRIVATE_EMAIL', 'PRIVATE_PASSPORT', 'PRIVATE_CARD', 'PRIVATE_OTP', f.input.eventKey]) {
       expect(text).not.toContain(privateValue);
     }
@@ -168,11 +168,11 @@ describe('administrator notification outbox', () => {
     expect(f.sendMessage).not.toHaveBeenCalled();
   });
 
-  it('labels issuance separately and can send without a public link', async () => {
+  it('labels issuance separately', async () => {
     const f = fixture(['999']);
     f.config.publicUrl = null;
     await f.db.transaction(tx => notifyAdmins(tx, f.config, { ...f.input, stage: 'issuance' }));
     await f.send(f.jobs[0]!.payload.notificationId);
-    expect(f.sendMessage).toHaveBeenCalledWith(999n, expect.stringContaining('Выпуск карты'), undefined);
+    expect(f.sendMessage).toHaveBeenCalledWith(999n, expect.stringContaining('Выпуск карты'));
   });
 });

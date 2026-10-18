@@ -5,7 +5,7 @@ import { adminNotifications, users } from '../db/schema';
 import { enqueue, PermanentJobError, type JobContext, type JobHandler } from '../queue/queue';
 import type { BotApi } from '../telegram/bot';
 
-type Stage = 'verification' | 'issuance';
+type Stage = 'verification' | 'issuance' | 'card_request';
 type AdminConfig = Pick<Config, 'adminTelegramIds' | 'publicUrl'>;
 
 // The caller passes its business transaction, so a rolled-back application cannot notify an administrator.
@@ -27,7 +27,7 @@ export async function notifyAdmins(
   }
 }
 
-const STAGES: Record<Stage, string> = { verification: 'Верификация', issuance: 'Выпуск карты' };
+const STAGES: Record<Stage, string> = { verification: 'Верификация', issuance: 'Выпуск карты', card_request: 'Пополнение или заморозка карты' };
 
 export class AdminNotificationService {
   constructor(
@@ -59,11 +59,9 @@ export class AdminNotificationService {
 
       // No documents, names, contact details, card credentials or verification codes leave through Telegram.
       const text = `<b>Новая заявка</b>\nКлиент GUDEX: <code>${user.id}</code>\nTelegram ID: <code>${user.telegramId}</code>\nЭтап: ${stage}`;
-      const button = this.config.publicUrl
-        ? { text: 'Открыть админку', url: `${this.config.publicUrl.replace(/\/+$/, '')}/admin` }
-        : undefined;
+      // No button: the administrator opens the admin screen from their own profile in the Mini App.
       await context?.assertActive();
-      await this.bot.sendMessage(notification.recipientTelegramId, text, button);
+      await this.bot.sendMessage(notification.recipientTelegramId, text);
       await tx.update(adminNotifications).set({ sentAt: new Date() }).where(eq(adminNotifications.id, notification.id));
     });
   }

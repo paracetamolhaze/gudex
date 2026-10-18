@@ -66,9 +66,11 @@ export interface CardPartner {
   rechargeCard(input: { partnerCardId: string; amountUsd: bigint; externalRef: string; maxDebitUsd?: bigint; beforeSubmit?: () => Promise<void> }): Promise<void>;
   isRechargeDone(externalRef: string): Promise<boolean>;
 
-  freezeCard(partnerCardId: string, externalRef?: string, beforeSubmit?: () => Promise<void>): Promise<void>;
-  unfreezeCard(partnerCardId: string, externalRef?: string, beforeSubmit?: () => Promise<void>): Promise<void>;
-  getCardState?(partnerCardId: string): Promise<'active' | 'frozen' | null>;
+  // customerNo lets the adapter confirm the new state from the customer's card list instead of the card detail.
+  freezeCard(partnerCardId: string, externalRef?: string, beforeSubmit?: () => Promise<void>, customerNo?: string): Promise<void>;
+  unfreezeCard(partnerCardId: string, externalRef?: string, beforeSubmit?: () => Promise<void>, customerNo?: string): Promise<void>;
+  /** With customerNo the state is read from that customer's card list (the only card read allowed with manual issuance). */
+  getCardState?(partnerCardId: string, customerNo?: string): Promise<'active' | 'frozen' | null>;
   bindReceipt?(reference: string, orderNo: string, partnerCardId?: string): Promise<void>;
   getIssueSettlement?(reference: string): Promise<{ grossUsd: bigint }>;
   getRechargeSettlement?(reference: string): Promise<{ grossUsd: bigint }>;
@@ -77,6 +79,8 @@ export interface CardPartner {
 
   getCardSensitive(partnerCardId: string): Promise<PartnerCardSensitive>;
   listTransactions(partnerCardId: string): Promise<PartnerTransaction[]>;
+  // Card balance in USD cents as the partner reports it; null when the card is not listed.
+  getCardBalance?(partnerCardId: string, customerNo: string): Promise<bigint | null>;
 }
 
 export class PartnerError extends Error {

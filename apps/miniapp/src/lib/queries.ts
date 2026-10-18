@@ -9,6 +9,7 @@ import type {
   CardBillingAddressDto,
   CardBillingAddressInput,
   CardBillingCountryDto,
+  CardApplicationDto,
   CardIssueQuoteDto,
   CardSensitiveDto,
   DepositAddressDto,
@@ -16,6 +17,8 @@ import type {
   DepositInvoiceOptionDto,
   DepositInvoiceInput,
   ExchangeSessionDto,
+  FeePaymentDto,
+  FeeWalletNetwork,
   KycRequirementsDto,
   KycDto,
   Locale,
@@ -33,7 +36,7 @@ import type {
 } from '@gudex/shared';
 import { request } from './api';
 import { fundingEnabled } from './funding';
-import { sendKycSubmission, type KycSubmission, type KycUploadCache } from './kyc';
+import { sendCardApplication, sendKycSubmission, type CardApplicationSubmission, type KycSubmission, type KycUploadCache } from './kyc';
 import { invoicePollMs } from './deposit-invoice';
 
 // Пока что-то «в обработке», экран опрашивает сервер — без ручного обновления.
@@ -51,6 +54,7 @@ export const keys = {
   activeInvoice: ['active-deposit-invoice'] as const,
   invoice: ['deposit-invoice'] as const,
   activity: ['activity'] as const,
+  feePayment: ['fee-payment'] as const,
 };
 
 export function useConfig() {
@@ -62,7 +66,9 @@ export function useMe() {
   return useQuery({
     queryKey: keys.me,
     queryFn: () => request<MeDto>('/v1/me'),
-    refetchInterval: (query) => (query.state.data?.kyc.status === 'pending' && query.state.data.kyc.submissionState !== 'unknown' ? POLL_MS : false),
+    // An operator review can take days: refresh it like the balance, not like a fast provider status.
+    refetchInterval: (query) => (query.state.data?.kyc.status === 'pending' && query.state.data.kyc.submissionState !== 'unknown'
+      ? query.state.data.kyc.submissionState === 'manual_review' ? BALANCE_REFRESH_MS : POLL_MS : false),
   });
 }
 
@@ -76,7 +82,7 @@ export function useCards(freshOnMount = false) {
     queryKey: keys.cards,
     queryFn: () => request<CardDto[]>('/v1/cards'),
     refetchOnMount: freshOnMount ? 'always' : undefined,
-    refetchInterval: (query) => (query.state.data?.some((c) => c.status === 'pending' && c.pendingOperationStatus !== 'unknown') ? POLL_MS : BALANCE_REFRESH_MS),
+    refetchInterval: (query) => (query.state.data?.some((c) => c.status === 'pending' && c.pendingOperationStatus !== 'unknown' && c.pendingFulfillmentMode !== 'manual') ? POLL_MS : BALANCE_REFRESH_MS),
     refetchIntervalInBackground: false,
   });
 }
@@ -197,7 +203,8 @@ export function useOperation(operationId: string | null) {
     enabled: operationId !== null,
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      if (status === 'unknown') return BALANCE_REFRESH_MS;
+      // An operator request can take a while; poll it like the balance.
+      if (status === 'unknown' || query.state.data?.fulfillmentMode === 'manual') return BALANCE_REFRESH_MS;
       return status && status !== 'pending' && status !== 'processing' ? false : POLL_MS;
     },
     refetchIntervalInBackground: false,
@@ -217,6 +224,58 @@ export function useSubmitKyc() {
     onSuccess: (kyc: KycDto) => client.setQueryData<MeDto>(keys.me, (me) => me ? { ...me, kyc } : me),
     // A lost submit response may still mean the server accepted the verification.
     onSettled: () => client.invalidateQueries({ queryKey: keys.me }),
+  });
+}
+
+export function useSubmitCardApplication() {
+  const client = useQueryClient();
+  const invalidate = useInvalidateMoney();
+  const uploads = useRef<KycUploadCache>(new Map());
+  return useMutation({
+    gcTime: 0,
+    mutationFn: (body: CardApplicationSubmission) => sendCardApplication(body, uploads.current),
+    onSuccess: ({ kyc }: CardApplicationDto) => {
+      client.setQueryData<MeDto>(keys.me, (me) => me ? { ...me, kyc } : me);
+      invalidate();
+    },
+    // A lost response may still mean the application and its reserve were committed.
+    onSettled: () => Promise.all([client.invalidateQueries({ queryKey: keys.me }), client.invalidateQueries({ queryKey: keys.issueQuote })]),
+  });
+}
+
+// The issuance fee request on the shared app wallet; polled while the transfer is awaited.
+export function useFeePayment(enabled: boolean) {
+  return useQuery({
+    queryKey: keys.feePayment,
+    queryFn: () => request<FeePaymentDto | null>('/v1/fee-payments/current'),
+    enabled,
+    staleTime: 0,
+    refetchInterval: (query) => (query.state.data?.status === 'awaiting' ? 10_000 : false),
+    refetchIntervalInBackground: false,
+    retry: false,
+  });
+}
+
+/** The saved application takes the fee from the balance (a refund or a payment confirmed late). */
+export function usePayApplicationFromBalance() {
+  const client = useQueryClient();
+  const invalidate = useInvalidateMoney();
+  return useMutation({
+    mutationFn: (asset: WalletAsset) => request<CardApplicationDto>('/v1/card-application/pay', { method: 'POST', body: { asset } }),
+    // The new pending card goes into the cache at once, so the screen moves on before the balance refresh lands.
+    onSuccess: ({ kyc, card }) => {
+      client.setQueryData<MeDto>(keys.me, (me) => me ? { ...me, kyc } : me);
+      if (card) client.setQueryData<CardDto[]>(keys.cards, (cards) => [...(cards ?? []).filter(item => item.id !== card.id), card]);
+    },
+    onSettled: () => Promise.all([invalidate(), client.invalidateQueries({ queryKey: keys.me })]),
+  });
+}
+
+export function useCreateFeePayment() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { asset: WalletAsset; network: FeeWalletNetwork }) => request<FeePaymentDto>('/v1/fee-payments', { method: 'POST', body }),
+    onSuccess: (value) => client.setQueryData(keys.feePayment, value),
   });
 }
 
@@ -262,10 +321,11 @@ export function fetchIssueQuote(asset: WalletAsset) {
   return request<CardIssueQuoteDto>(`/v1/cards/issue-quote?asset=${asset}`);
 }
 
-export function useIssueQuote(asset: WalletAsset) {
+export function useIssueQuote(asset: WalletAsset, enabled = true) {
   return useQuery({
     queryKey: [...keys.issueQuote, asset],
     queryFn: () => fetchIssueQuote(asset),
+    enabled,
     staleTime: 30_000,
     gcTime: 0,
     refetchOnMount: 'always',
@@ -312,9 +372,9 @@ export function useAdditionalAttempt() {
     onSettled: () => client.invalidateQueries({ queryKey: keys.additionalAttempt }) });
 }
 
-export function useCardBillingCountries() {
+export function useCardBillingCountries(enabled = true) {
   return useQuery({ queryKey: ['card-billing-countries'], queryFn: () => request<CardBillingCountryDto[]>('/v1/cards/billing-countries'),
-    staleTime: 5 * 60_000, retry: false });
+    staleTime: 5 * 60_000, retry: false, enabled });
 }
 
 export function useSaveCardBillingAddress() {

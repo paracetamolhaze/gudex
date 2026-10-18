@@ -54,7 +54,8 @@ export async function createTestContext(
   `);
   const partner = makePartner ? makePartner(db) : new MockUpayPartner(db);
   const bot = new LogBotApi();
-  const deps: Deps = { config, db, partner, mockPartner: partner instanceof MockUpayPartner ? partner : undefined, depositProvider: options.depositProvider ?? new MockDepositProvider(), withdrawalProvider: options.withdrawalProvider ?? new MockWithdrawalProvider(), bot };
+  const deps: Deps = { config, db, partner, mockPartner: partner instanceof MockUpayPartner ? partner : undefined, depositProvider: options.depositProvider ?? new MockDepositProvider(), withdrawalProvider: options.withdrawalProvider ?? new MockWithdrawalProvider(), bot,
+    chainFetch: (async () => { throw new Error('Blockchain access is disabled in tests'); }) as unknown as typeof fetch };
   const services = createServices(deps);
   const runner = new JobRunner(db, jobHandlers(services));
   const app = await buildApp(deps, services, { onResponse: options.onResponse, drainJobs: () => runner.drain({ maxJobs: 50, maxDurationMs: 5000 }) });

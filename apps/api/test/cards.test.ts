@@ -122,7 +122,8 @@ describe('card lifecycle', () => {
     expect(texts).toContain('Зачислено <b>100 USDT</b> (TON)');
     expect(texts).toMatch(/Карта •• \d{4} выпущена/);
     expect(texts).toContain('пополнена на <b>$49.25</b>');
-    expect(texts).toContain('Netflix: <b>−$20</b>');
+    // Purchases appear in the Mini App history, not as Telegram messages.
+    expect(texts).not.toContain('Netflix');
   });
 
   it('refunds the issue fee when the partner rejects the card', async () => {
@@ -275,13 +276,14 @@ describe('card lifecycle', () => {
     await ctx.settle();
     const cardId = issued.body.card.id;
     const frozen = await client.post(`/v1/cards/${cardId}/freeze`, { idempotencyKey: key() });
-    await ctx.settle();
-    expect((await client.get(`/v1/operations/${frozen.body.id}`)).body.status).toBe('unknown');
+    // The lost answer is checked on the card state later; the request itself is never sent again.
+    await ctx.runner.drain();
+    expect((await client.get(`/v1/operations/${frozen.body.id}`)).body.status).toBe('processing');
     expect((await client.get(`/v1/cards/${cardId}`)).body.status).toBe('active');
     expect((await ctx.db.execute(sql`select status from mock_upay_cards`)).rows[0]).toEqual({ status: 'frozen' });
     lookupUnavailable = false;
     staleState = true;
-    expect((await ctx.services.cards.reconcileUnknown(frozen.body.id)).status).toBe('unknown');
+    expect((await ctx.services.cards.reconcileUnknown(frozen.body.id)).status).toBe('processing');
     staleState = false;
     expect((await ctx.services.cards.reconcileUnknown(frozen.body.id)).status).toBe('succeeded');
     expect((await client.get(`/v1/cards/${cardId}`)).body.status).toBe('frozen');

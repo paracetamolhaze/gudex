@@ -10,6 +10,9 @@ import { inspectUpayAccess } from '../partner/upay/access-readiness';
 import { inspectDatabase, prepareLiveDatabase } from '../ops/live-database';
 import { inspectKycStatus } from '../ops/kyc-status';
 import { inspectResetTestAccount, resetTestAccount } from '../ops/reset-test-account';
+import { inspectUnfinishedCard, removeUnfinishedCard, REMOVE_UNFINISHED_CARD_CONFIRMATION } from '../ops/remove-unfinished-card';
+import { inspectZeroOwnerAccount, zeroOwnerAccount, ZERO_OWNER_CONFIRMATION } from '../ops/zero-owner-account';
+import { inspectOwnerApplication, removeOwnerApplication, REMOVE_OWNER_APPLICATION_CONFIRMATION } from '../ops/remove-owner-application';
 import { inspectExistingKycCustomer, resumeExistingKycCustomer } from '../ops/kyc-existing-customer';
 import { inspectKycSubjectAttestation, recordKycSubjectAttestation } from '../ops/kyc-subject-attestation';
 import { inspectCardOperationStatus } from '../ops/card-operation-status';
@@ -95,6 +98,44 @@ export const opsRoutes = (deps: Deps, services: Services, drainJobs?: () => Prom
     const result = await resetTestAccount(deps.db, telegramId, body.expectedUserId, body.expectedSubmissionId);
     reply.header('Cache-Control', 'no-store');
     return result;
+  });
+  // Owner-authorized removal of the unfinished test issuance; the GET only shows what would be removed.
+  app.get('/test-account/:telegramId/unfinished-card', async (request, reply) => {
+    parse(z.object({ telegramId: z.literal('514468501') }), request.params);
+    reply.header('Cache-Control', 'no-store');
+    return inspectUnfinishedCard(deps.db, deps.upay);
+  });
+  app.post('/test-account/:telegramId/unfinished-card', async (request, reply) => {
+    parse(z.object({ telegramId: z.literal('514468501') }), request.params);
+    const body = parse(z.object({ expectedUserId: z.uuid(), expectedOperationId: z.uuid().nullable(), expectedCardId: z.uuid().nullable(),
+      confirmation: z.literal(REMOVE_UNFINISHED_CARD_CONFIRMATION) }).strict(), request.body);
+    reply.header('Cache-Control', 'no-store');
+    return removeUnfinishedCard(deps.db, deps.upay, { userId: body.expectedUserId, operationId: body.expectedOperationId, cardId: body.expectedCardId });
+  });
+  // Owner-requested reset of his account to zero; the GET only shows what would be deleted.
+  app.get('/test-account/:telegramId/zero', async (request, reply) => {
+    parse(z.object({ telegramId: z.literal('514468501') }), request.params);
+    reply.header('Cache-Control', 'no-store');
+    return inspectZeroOwnerAccount(deps.db);
+  });
+  app.post('/test-account/:telegramId/zero', async (request, reply) => {
+    parse(z.object({ telegramId: z.literal('514468501') }), request.params);
+    const body = parse(z.object({ expectedUserId: z.uuid(), confirmation: z.literal(ZERO_OWNER_CONFIRMATION) }).strict(), request.body);
+    reply.header('Cache-Control', 'no-store');
+    return zeroOwnerAccount(deps.db, body.expectedUserId);
+  });
+  // Owner-requested removal of his waiting card application; the GET only shows what would be removed.
+  app.get('/test-account/:telegramId/application', async (request, reply) => {
+    parse(z.object({ telegramId: z.literal('514468501') }), request.params);
+    reply.header('Cache-Control', 'no-store');
+    return inspectOwnerApplication(deps.db);
+  });
+  app.post('/test-account/:telegramId/application', async (request, reply) => {
+    parse(z.object({ telegramId: z.literal('514468501') }), request.params);
+    const body = parse(z.object({ expectedUserId: z.uuid(), expectedOperationId: z.uuid().nullable(),
+      confirmation: z.literal(REMOVE_OWNER_APPLICATION_CONFIRMATION) }).strict(), request.body);
+    reply.header('Cache-Control', 'no-store');
+    return removeOwnerApplication(deps.db, { userId: body.expectedUserId, operationId: body.expectedOperationId });
   });
   app.get('/kyc/:telegramId', async (request, reply) => {
     const { telegramId } = parse(z.object({ telegramId: z.string().regex(/^[1-9]\d{0,15}$/) }), request.params);

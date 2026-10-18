@@ -30,6 +30,7 @@
 .admin-operation { display: flex; flex-direction: column; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .admin-operation:last-child { border-bottom: 0; }
 .admin-id { overflow-wrap: anywhere; color: var(--muted); }
+.admin-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
 .admin-pagination { display: flex; gap: 12px; justify-content: space-between; align-items: center; }
 .admin-pagination .btn { width: auto; }
 .admin-preview { position: fixed; inset: 0; z-index: 150; background: rgba(7, 9, 15, .98); display: flex; flex-direction: column; padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)); gap: 16px; }

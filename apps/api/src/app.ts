@@ -29,6 +29,8 @@ import { NoticeService } from './services/notice';
 import { NotificationService } from './services/notify';
 import { AdminNotificationService } from './services/admin-notify';
 import { ManualAdminService } from './services/manual-admin';
+import { CardApplicationService } from './services/card-application';
+import { FeePaymentService } from './services/fee-payments';
 import { ReferralService } from './services/referrals';
 import { TransferService } from './services/transfers';
 import { WalletService } from './services/wallet';
@@ -51,6 +53,8 @@ export interface Deps {
   mockPartner?: MockUpayPartner;
   upay?: UpayClient;
   cardBilling?: CardBillingService;
+  // Public blockchain API access for the app wallet; tests replace it so nothing leaves the machine.
+  chainFetch?: typeof fetch;
   depositInvoices?: NativeDepositInvoices;
 }
 
@@ -70,6 +74,8 @@ export interface Services {
   notifications: NotificationService;
   adminNotifications: AdminNotificationService;
   manualAdmin: ManualAdminService;
+  cardApplications: CardApplicationService;
+  feePayments: FeePaymentService;
   bot: BotService;
 }
 
@@ -79,27 +85,37 @@ export function createServices(deps: Deps): Services {
   const notices = new NoticeService(db);
   const wallet = new WalletService(db, deps.depositProvider, config.MIN_DEPOSIT);
   const cards = new CardService(db, config, partner);
+  const kyc = new KycService(db, partner, config.KYC_POLL_SECONDS, new DbKycDocumentStore(db, config.appSecret, config.KYC_DOCUMENT_TTL_SECONDS), {
+    live: config.CARD_PARTNER === 'upay', enabled: config.CARD_PARTNER !== 'upay' || config.UPAY_KYC_ENABLED,
+    requireSelfie: config.UPAY_KYC_REQUIRE_SELFIE,
+    manual: config.CARD_ISSUANCE_MODE === 'manual', adminTelegramIds: config.adminTelegramIds,
+  });
+  const cardBilling = deps.cardBilling ?? new CardBillingService(db, config, deps.upay);
+  const cardApplications = new CardApplicationService(db, config, kyc, cards, cardBilling);
+  const feePayments = new FeePaymentService(db, config, deps.chainFetch);
+  // A payment to the app wallet moves a waiting application to the operator by itself.
+  feePayments.setCreditedHook((tx, input) => cardApplications.afterFeeCredited(tx, input));
   return {
     auth,
-    kyc: new KycService(db, partner, config.KYC_POLL_SECONDS, new DbKycDocumentStore(db, config.appSecret, config.KYC_DOCUMENT_TTL_SECONDS), {
-      live: config.CARD_PARTNER === 'upay', enabled: config.CARD_PARTNER !== 'upay' || config.UPAY_KYC_ENABLED,
-      requireSelfie: config.UPAY_KYC_REQUIRE_SELFIE,
-      manual: config.CARD_ISSUANCE_MODE === 'manual', adminTelegramIds: config.adminTelegramIds,
-    }),
+    kyc,
     wallet,
     depositInvoices: new DepositInvoiceService(db, config.appSecret, deps.depositInvoices,
-      (tx, input) => wallet.creditInvoice(tx, input), { enabled: config.UPAY_INVOICE_DEPOSITS_ENABLED, live: config.CARD_PARTNER === 'upay' && !config.DEV_TOOLS }),
+      // Manual issuance: the UPay bot may not create or read invoices; the fee goes to the app wallet instead.
+      (tx, input) => wallet.creditInvoice(tx, input), { enabled: config.UPAY_INVOICE_DEPOSITS_ENABLED,
+        live: config.CARD_PARTNER === 'upay' && !config.DEV_TOOLS && config.CARD_ISSUANCE_MODE !== 'manual' }),
     withdrawals: new WithdrawalService(db, config, deps.withdrawalProvider),
     transfers: new TransferService(db),
     referrals: new ReferralService(db, config),
     notices,
     exchange: new ExchangeService(config, wallet),
     cards,
-    cardBilling: deps.cardBilling ?? new CardBillingService(db, config, deps.upay),
+    cardBilling,
     activity: new ActivityService(db),
     notifications: new NotificationService(db, deps.bot, config.publicUrl),
     adminNotifications: new AdminNotificationService(db, deps.bot, config),
     manualAdmin: new ManualAdminService(db, config, deps.upay, cards),
+    cardApplications,
+    feePayments,
     bot: new BotService(deps.bot, config, auth, notices),
   };
 }
@@ -112,6 +128,7 @@ export function jobHandlers(services: Services): Record<string, JobHandler> {
     ...services.withdrawals.handlers(),
     ...services.notifications.handlers(),
     ...services.adminNotifications.handlers(),
+    ...services.feePayments.handlers(),
   };
 }
 
@@ -182,7 +199,8 @@ export async function buildApp(deps: Deps, services: Services, options: BuildOpt
         issueFeeUsd: config.CARD_ISSUE_FEE_USD,
         topupFeeBps: config.CARD_TOPUP_FEE_BPS,
         minTopupUsd: config.CARD_MIN_TOPUP_USD,
-        maxCardsPerUser: config.MAX_CARDS_PER_USER,
+        // Manual issuance gives every client one card.
+        maxCardsPerUser: config.CARD_ISSUANCE_MODE === 'manual' ? 1 : config.MAX_CARDS_PER_USER,
         limits: {
           perTransactionUsd: config.CARD_LIMIT_TX_USD ?? null,
           dailyUsd: config.CARD_LIMIT_DAY_USD ?? null,
@@ -200,6 +218,7 @@ export async function buildApp(deps: Deps, services: Services, options: BuildOpt
       integration: {
         cardPartner: config.CARD_PARTNER,
         issuanceMode: config.CARD_ISSUANCE_MODE,
+        feeWallet: services.feePayments.options(),
         upayConfigured: Boolean(config.UPAY_LOGIN && config.UPAY_PASSWORD && config.UPAY_TOTP_SECRET),
         upayWritesEnabled: config.CARD_PARTNER === 'upay' && config.UPAY_WRITES_ENABLED,
         deposits: services.depositInvoices.ready ? 'live' : deps.depositProvider.mode,
@@ -209,7 +228,8 @@ export async function buildApp(deps: Deps, services: Services, options: BuildOpt
         capabilities: {
           kyc: config.CARD_ISSUANCE_MODE === 'manual' || config.CARD_PARTNER !== 'upay' || config.UPAY_KYC_ENABLED,
           issue: config.CARD_ISSUANCE_MODE === 'manual' || config.CARD_PARTNER !== 'upay' || config.UPAY_WRITES_ENABLED,
-          topup: config.CARD_PARTNER !== 'upay' || config.UPAY_WRITES_ENABLED,
+          // Manual issuance: card top-ups arrive later through the client's personal wallet.
+          topup: config.CARD_ISSUANCE_MODE !== 'manual' && (config.CARD_PARTNER !== 'upay' || config.UPAY_WRITES_ENABLED),
           freeze: config.CARD_PARTNER !== 'upay' || config.UPAY_WRITES_ENABLED,
         },
       },
@@ -227,7 +247,7 @@ export async function buildApp(deps: Deps, services: Services, options: BuildOpt
   await app.register(cardRoutes(services), { prefix: '/v1' });
   await app.register(cardBillingRoutes(services), { prefix: '/v1' });
   await app.register(moneyRoutes(deps, services), { prefix: '/v1' });
-  await app.register(telegramRoutes(deps, services.bot), { prefix: '/v1' });
+  await app.register(telegramRoutes(deps, services.bot, services.feePayments), { prefix: '/v1' });
   await app.register(opsRoutes(deps, services, options.drainJobs), { prefix: '/v1/ops' });
   await app.register(adminRoutes(services), { prefix: '/v1/admin' });
   if (deps.config.DEV_TOOLS) await app.register(devRoutes(deps, services), { prefix: '/v1/dev' });

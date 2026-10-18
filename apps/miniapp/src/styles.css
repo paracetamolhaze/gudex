@@ -644,6 +644,9 @@ input {
 .bank-card {
   position: relative;
   width: 100%;
+  /* The card keeps its own layout inside a button (home screen): no centring, no button font weight. */
+  text-align: left;
+  font-weight: 400;
   aspect-ratio: 1.586;
   border-radius: var(--radius-lg);
   padding: 22px;

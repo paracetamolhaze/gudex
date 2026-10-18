@@ -5,13 +5,16 @@ import { loadConfig } from '../src/config';
 import { adminAuditLog, cardOperations, cards, jobs, kycDocuments, kycProfiles, ledgerEntries, users } from '../src/db/schema';
 import { DbKycDocumentStore } from '../src/kyc/document-store';
 import type { UpayClient } from '../src/partner/upay/client';
+import type { Tx } from '../src/db/client';
 import type { CardService } from '../src/services/cards';
 import { ManualAdminService } from '../src/services/manual-admin';
+import { CardRequisitesVault } from '../src/services/card-requisites';
 import { api, createTestContext, registerUser, telegramLogin, TEST_BOT_TOKEN, TEST_PIN, type TestContext } from './helpers';
 
 let ctx: TestContext;
 const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString('base64');
 const productId = '2040769880440840193';
+const typed = { cardNumber: '4242 4242 4242 4242', expiryMonth: 12, expiryYear: 30, cvv: '123' };
 const env = { CARD_ISSUANCE_MODE: 'manual', ADMIN_TELEGRAM_IDS: '999', CARD_REMINDER_MINUTES: '0' };
 const config = () => loadConfig({ ...process.env, ...env, TELEGRAM_BOT_TOKEN: TEST_BOT_TOKEN, CARD_PARTNER: 'upay',
   UPAY_LOGIN: 'synthetic-login', UPAY_PASSWORD: 'synthetic-password', UPAY_TOTP_SECRET: 'JBSWY3DPEHPK3PXP', DEV_TOOLS: 'false' });
@@ -33,7 +36,7 @@ async function fixture() {
     email: 'ivan@example.test', phone: '2025550100', globalCode: '+1' };
   const info: Record<string, unknown> = { authResult: 1, primaryApprovedNum: 1, items: [{ documentType: 2, level: 1, status: 1 }] };
   const detail: Record<string, unknown> = { agentCustomerCardId: 'native_card', accountCardId: 'account_card', brokerCardId: 'broker_card',
-    customerNo: 'customer_no', cardStatus: 1, agentCardId: productId, cardSignatureName: 'Ivan Petrov', cardNumber: '****4242', expirationTime: '12/30' };
+    customerNo: 'customer_no', cardStatus: 1, agentCardId: productId, cardSignatureName: 'Ivan Petrov', cardNumber: '****4242', expirationTime: '12/30', balance: '25.50', symbol: 'USD' };
   const receipt: Record<string, unknown> = { orderNo: 'native_order', cardId: 'broker_card', customerNo: 'customer_no', status: 1,
     currency: 'USDT', paymentAmount: '10.00', openCardAmount: '10.00', rechargeAmount: '0.00' };
   const readRequest = vi.fn(async (method: string, path: string) => {
@@ -47,10 +50,10 @@ async function fixture() {
   const loginInfo = vi.fn(async () => ({ id: 'synthetic_member', iv: 'synthetic_iv_1234' }));
   const complete = vi.fn(async () => {});
   const service = new ManualAdminService(ctx.db, config(), { readRequest, loginInfo } as unknown as Pick<UpayClient, 'readRequest' | 'loginInfo'>,
-    { completeManualIssue: complete } as unknown as CardService);
+    { completeManualIssue: complete, cancelManualApplication: (tx: Tx, userId: string, reason: string) => ctx.services.cards.cancelManualApplication(tx, userId, reason) } as unknown as CardService);
   const approve = () => service.approveKyc(admin!.id, user!.id, { submissionId, customerId: 'customer_id', customerNo: 'customer_no', documentsMatch: true });
-  const operation = async (mode: 'manual' | 'automatic' = 'manual', status: 'pending' | 'unknown' = 'pending') => {
-    await ctx.db.update(kycProfiles).set({ status: 'approved', submissionState: 'manual_verified', partnerCustomerId: 'customer_no' }).where(eq(kycProfiles.userId, user!.id));
+  const operation = async (mode: 'manual' | 'automatic' = 'manual', status: 'pending' | 'unknown' = 'pending', approved = true) => {
+    if (approved) await ctx.db.update(kycProfiles).set({ status: 'approved', submissionState: 'manual_verified', partnerCustomerId: 'customer_no' }).where(eq(kycProfiles.userId, user!.id));
     const [card] = await ctx.db.insert(cards).values({ userId: user!.id, status: 'pending', productName: 'Synthetic Premier' }).returning();
     const [op] = await ctx.db.insert(cardOperations).values({ userId: user!.id, cardId: card!.id, type: 'issue', status,
       asset: 'USDT', amount: 0n, fee: 10_000000n, partnerProvider: 'upay', fulfillmentMode: mode, idempotencyKey: randomUUID() }).returning();
@@ -98,7 +101,7 @@ describe('manual administrator boundary', () => {
     const op = await f.operation('automatic', 'unknown');
     const list = await f.service.applications(f.admin.id, { page: 1, limit: 20 });
     expect(list.items).toMatchObject([{ userId: f.user.id, hasPendingCard: true }]);
-    await expect(f.service.bindCard(f.admin.id, f.user.id, { operationId: op.id, partnerCardId: 'native_card', orderNo: 'native_order' })).rejects.toMatchObject({ code: 'validation' });
+    await expect(f.service.bindCard(f.admin.id, f.user.id, { operationId: op.id, ...typed })).rejects.toMatchObject({ code: 'validation' });
     expect(f.readRequest).not.toHaveBeenCalled();
     expect(f.complete).not.toHaveBeenCalled();
   });
@@ -199,40 +202,59 @@ describe('manual card proof', () => {
     expect(JSON.stringify(result)).not.toMatch(/SENSITIVE|PRIVATE_FOREIGN|foreign_card/);
   });
 
-  it.each(['agentCustomerCardId', 'cardId'])('rejects contradictory receipt identifiers even when the other %s alias matches', async key => {
+  it('links the card found by Customer No and last digits and seals the typed card details to it', async () => {
     const f = await fixture();
     const op = await f.operation();
-    f.receipt.agentCustomerCardId = 'native_card';
-    f.receipt[key] = 'foreign_card';
-    await expect(f.service.bindCard(f.admin.id, f.user.id, { operationId: op.id, partnerCardId: 'native_card', orderNo: 'native_order' })).rejects.toMatchObject({ code: 'validation' });
+    await f.service.bindCard(f.admin.id, f.user.id, { operationId: op.id, ...typed });
+    expect(f.readRequest.mock.calls.map(call => call.slice(0, 2))).toEqual([['GET', '/card/list']]);
+    const call = f.complete.mock.calls[0] as unknown as unknown[];
+    expect(call.slice(0, 5)).toEqual([f.admin.id, f.user.id, op.id, { partnerCardId: 'native_card', last4: '4242', expiryMonth: 12, expiryYear: 2030 },
+      { grossUsd: 1000n, orderNo: `manual-${op.id}`, partnerCustomerId: 'customer_no', submissionId: f.submissionId, productId, operationUpdatedAt: op.updatedAt.toISOString() }]);
+    await ctx.db.transaction(tx => (call[5] as (tx: Tx) => Promise<void>)(tx));
+    const [card] = await ctx.db.select().from(cards).where(eq(cards.id, op.cardId));
+    expect(card!.requisitesCiphertext).not.toContain('4242');
+    expect(new CardRequisitesVault(config().appSecret).open(f.user.id, op.cardId, card!)).toEqual({ pan: '4242424242424242', cvv: '123' });
+    expect(card!.partnerBalance).toBe(2550n);
+    expect(() => new CardRequisitesVault(config().appSecret).open(f.foreign.id, op.cardId, card!)).toThrow();
+  });
+
+  it.each([
+    ['another card number', { cardNumber: '4000056655665556' }],
+    ['a mistyped card number', { cardNumber: '4242424242424241' }],
+    ['an expired card', { expiryMonth: 1, expiryYear: 20 }],
+    ['a short CVV', { cvv: '12' }],
+  ])('refuses %s without settlement', async (_label, change) => {
+    const f = await fixture();
+    const op = await f.operation();
+    await expect(f.service.bindCard(f.admin.id, f.user.id, { operationId: op.id, ...typed, ...change })).rejects.toMatchObject({ code: 'validation' });
     expect(f.complete).not.toHaveBeenCalled();
   });
 
-  it('passes only the exact successful receipt and verified card display with a fresh local binding fence', async () => {
+  it.each(['customerNo', 'cardStatus', 'agentCustomerCardId'])('refuses a card whose UPay %s does not fit the Customer ID', async key => {
     const f = await fixture();
     const op = await f.operation();
-    await f.service.bindCard(f.admin.id, f.user.id, { operationId: op.id, partnerCardId: 'native_card', orderNo: 'native_order' });
-    expect(f.complete).toHaveBeenCalledExactlyOnceWith(f.admin.id, f.user.id, op.id,
-      { partnerCardId: 'native_card', last4: '4242', expiryMonth: 12, expiryYear: 2030 },
-      { grossUsd: 1000n, orderNo: 'native_order', partnerCustomerId: 'customer_no', submissionId: f.submissionId,
-        productId, operationUpdatedAt: op.updatedAt.toISOString() });
-    expect(f.readRequest.mock.calls.every(([method, path]) => method === 'GET' || path === '/card/getPageToCardOperateRecord')).toBe(true);
-  });
-
-  it.each(['customerNo', 'agentCustomerCardId', 'agentCardId', 'cardSignatureName', 'cardStatus'])('blocks a foreign/ineligible card %s before settlement', async key => {
-    const f = await fixture();
-    const op = await f.operation();
-    f.detail[key] = key === 'cardStatus' ? 2 : 'foreign';
-    await expect(f.service.bindCard(f.admin.id, f.user.id, { operationId: op.id, partnerCardId: 'native_card', orderNo: 'native_order' })).rejects.toMatchObject({ code: 'validation' });
-    expect(f.complete).not.toHaveBeenCalled();
-  });
-
-  it.each(['orderNo', 'cardId', 'customerNo', 'currency', 'status', 'paymentAmount', 'rechargeAmount'])('blocks an unproven issuance receipt %s without settlement', async key => {
-    const f = await fixture();
-    const op = await f.operation();
-    f.receipt[key] = key === 'status' ? 2 : key === 'paymentAmount' ? '10.01' : key === 'rechargeAmount' ? '1.00' : 'foreign';
-    await expect(f.service.bindCard(f.admin.id, f.user.id, { operationId: op.id, partnerCardId: 'native_card', orderNo: 'native_order' })).rejects.toMatchObject({ code: 'validation' });
+    f.detail[key] = key === 'cardStatus' ? 2 : key === 'agentCustomerCardId' ? null : 'foreign';
+    await expect(f.service.bindCard(f.admin.id, f.user.id, { operationId: op.id, ...typed })).rejects.toMatchObject({ code: 'validation' });
     expect(f.complete).not.toHaveBeenCalled();
     expect((await ctx.db.select().from(cardOperations))[0]!.status).toBe('pending');
+  });
+
+  it('approves the reviewed questionnaire together with the linked card of the named UPay customer', async () => {
+    const f = await fixture();
+    const op = await f.operation('manual', 'pending', false);
+    await expect(f.service.bindCard(f.admin.id, f.user.id, { operationId: op.id, ...typed })).rejects.toMatchObject({ code: 'validation' });
+    await ctx.db.insert(kycProfiles).values({ userId: f.foreign.id, partnerProvider: 'upay', partnerCustomerId: 'customer_no' });
+    await expect(f.service.bindCard(f.admin.id, f.user.id, { operationId: op.id, ...typed, customerNo: 'customer_no' })).rejects.toMatchObject({ code: 'validation' });
+    await ctx.db.delete(kycProfiles).where(eq(kycProfiles.userId, f.foreign.id));
+    await f.service.bindCard(f.admin.id, f.user.id, { operationId: op.id, ...typed, customerNo: 'customer_no' });
+    const call = f.complete.mock.calls[0] as unknown as unknown[];
+    expect(call[4]).toMatchObject({ orderNo: `manual-${op.id}`, partnerCustomerId: 'customer_no', submissionId: f.submissionId });
+    expect((await ctx.db.select().from(kycProfiles))[0]).toMatchObject({ status: 'pending', submissionState: 'manual_review' });
+    // CardService runs this inside the settlement transaction; on its own it only approves this exact submission.
+    await ctx.db.transaction(tx => (call[5] as (tx: Tx) => Promise<void>)(tx));
+    expect((await ctx.db.select().from(kycProfiles))[0]).toMatchObject({ status: 'approved', submissionState: 'manual_verified', partnerCustomerId: 'customer_no' });
+    expect(await ctx.db.select().from(kycDocuments)).toEqual([]);
+    expect((await ctx.db.select().from(adminAuditLog)).map(row => row.action)).toEqual(['manual_kyc_approve']);
+    await expect(ctx.db.transaction(tx => (call[5] as (tx: Tx) => Promise<void>)(tx))).rejects.toMatchObject({ code: 'validation' });
   });
 });

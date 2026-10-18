@@ -19,7 +19,11 @@ export type NotifyEvent =
   | { type: 'withdrawal_failed'; amount: string; asset: string }
   | { type: 'transfer_received'; amount: string; asset: string; from: string }
   | { type: 'kyc_approved' }
-  | { type: 'kyc_rejected' };
+  | { type: 'kyc_rejected' }
+  | { type: 'application_received'; amount: string; asset: string; sponsored?: boolean }
+  | { type: 'fee_paid'; amount: string; asset: string; missing?: string; minutesLeft?: number }
+  | { type: 'application_paid'; amount: string; asset: string }
+  | { type: 'application_rejected'; reason: string; amount?: string; asset?: string; sponsored?: boolean };
 
 export async function notify(db: DbOrTx, userId: string, event: NotifyEvent): Promise<void> {
   await enqueue(db, 'notify', { userId, event }, { maxAttempts: 5 });
@@ -58,6 +62,20 @@ const MESSAGES: Record<'ru' | 'en', (e: NotifyEvent) => string> = {
         return '✅ Верификация пройдена — можно выпускать карту.';
       case 'kyc_rejected':
         return 'Верификация не пройдена. Откройте приложение, чтобы попробовать снова.';
+      case 'fee_paid':
+        return e.missing ? `Получено <b>${e.amount} ${e.asset}</b>. Для выпуска не хватает ${e.missing} ${e.asset} — ${e.minutesLeft
+          ? `отправьте их на тот же адрес в течение ${e.minutesLeft} мин.` : 'откройте приложение, чтобы доплатить.'}`
+          : `✅ Получено <b>${e.amount} ${e.asset}</b> на оплату выпуска. Откройте приложение, чтобы продолжить.`;
+      case 'application_paid':
+        return `✅ <b>Оплата получена</b>: ${e.amount} ${e.asset}.
+Ожидайте проверку данных. Мы напишем, когда карта будет готова.`;
+      case 'application_received':
+        return ['📝 <b>Данные отправлены на проверку</b>', 'Ожидайте проверку данных — мы напишем, когда карта будет готова.',
+          ...(e.sponsored ? [] : [`За выпуск зарезервировано ${e.amount} ${e.asset}.`])].join('\n');
+      case 'application_rejected':
+        return [`Верификация не пройдена: ${escape(e.reason)}`,
+          ...(e.amount && e.asset && !e.sponsored ? [`${e.amount} ${e.asset} вернулись на баланс.`] : []),
+          'Откройте приложение, чтобы отправить данные заново.'].join('\n');
     }
   },
   en: (e) => {
@@ -89,6 +107,20 @@ const MESSAGES: Record<'ru' | 'en', (e: NotifyEvent) => string> = {
         return '✅ You are verified — you can now get a card.';
       case 'kyc_rejected':
         return 'Verification failed. Open the app to try again.';
+      case 'fee_paid':
+        return e.missing ? `Received <b>${e.amount} ${e.asset}</b>. ${e.missing} ${e.asset} is still missing for the card — ${e.minutesLeft
+          ? `send it to the same address within ${e.minutesLeft} min.` : 'open the app to pay the rest.'}`
+          : `✅ Received <b>${e.amount} ${e.asset}</b> for the card. Open the app to continue.`;
+      case 'application_paid':
+        return `✅ <b>Payment received</b>: ${e.amount} ${e.asset}.
+Please wait while we check your details. We will message you when the card is ready.`;
+      case 'application_received':
+        return ['📝 <b>Details sent for review</b>', "Please wait while we check your details — we'll message you when the card is ready.",
+          ...(e.sponsored ? [] : [`${e.amount} ${e.asset} is reserved for the issuance fee.`])].join('\n');
+      case 'application_rejected':
+        return [`Verification declined: ${escape(e.reason)}`,
+          ...(e.amount && e.asset && !e.sponsored ? [`${e.amount} ${e.asset} returned to your balance.`] : []),
+          'Open the app to submit your details again.'].join('\n');
     }
   },
 };

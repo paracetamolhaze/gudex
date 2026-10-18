@@ -10,6 +10,10 @@ export interface UpayMerchant { merchantNo?: string; companyName?: string; }
 export interface UpayLoginInfo { id: string; iv?: string; pinCodeSet?: boolean; }
 export interface UpayReadCheck { ok: boolean; code?: number; total?: number; }
 
+// Manual issuance: GUDEX staff do everything in the panel by hand. The bot only reads a
+// customer's card list (balance, state) and card operations (purchases), and freezes or
+// unfreezes a card on the client's request (the payment PIN needs the login metadata).
+export const CARD_INFO_READS = new Set(['GET /card/list', 'POST /card/getPageToTransaction', 'GET /sys/member/loginInfo', 'POST /card/thawFrozen']);
 const READS = new Set([
   'GET /sys/member/loginInfo', 'GET /agent/info', 'GET /customer/list', 'GET /customer/get',
   'GET /agentOperateLog/getPage',
@@ -54,6 +58,14 @@ export class UpayClient {
   }
 
   get configured(): boolean { return Boolean(this.config.UPAY_LOGIN && this.config.UPAY_PASSWORD && this.config.UPAY_TOTP_SECRET); }
+
+  get cardInfoOnly(): boolean { return this.config.CARD_ISSUANCE_MODE === 'manual'; }
+
+  private assertCardInfo(request: string): void {
+    if (this.cardInfoOnly && !CARD_INFO_READS.has(request)) {
+      throw new UpayError('GUDEX lets the UPay bot read only card balances and card operations', false, undefined, { phase: 'pre_dispatch', ack: 'unconfirmed' });
+    }
+  }
 
   private async authenticate(rejectedToken?: string): Promise<string> {
     if (!this.configured) throw new UpayError('UPay credentials are not configured', false);
@@ -170,6 +182,7 @@ export class UpayClient {
 
   async readRequest<T>(method: 'GET' | 'POST', endpoint: string, options: { query?: Record<string, string | number>; body?: object } = {}): Promise<T> {
     if (!READS.has(`${method} ${endpoint}`)) throw new UpayError('This UPay endpoint is not an approved read', false);
+    this.assertCardInfo(`${method} ${endpoint}`);
     const token = await this.authenticate();
     try { return await this.transport.request<T>(method, endpoint, { ...options, token }); }
     catch (err) {
@@ -180,6 +193,7 @@ export class UpayClient {
   }
 
   async submitRequest<T>(endpoint: string, body: object, options: { beforeDispatch?: () => Promise<void> } = {}): Promise<T> {
+    this.assertCardInfo(`POST ${endpoint}`);
     if (BILLING_WRITES.has(endpoint)) {
       const address = body as Record<string, unknown>;
       if (address.type !== 'ADD' || address.id !== '' || address.isDefault !== false || typeof address.tag !== 'string' || !/^GDXB[a-f0-9]{16}$/.test(address.tag)) {
@@ -223,6 +237,7 @@ export class UpayClient {
    * allocation. A dispatched request is never replayed, even on session expiry. */
   async createDepositInvoice(body: { coinId: string; chainId: string; amount: number; ditchCode: 'PTF' },
     options: { beforeDispatch?: () => Promise<void> } = {}): Promise<unknown> {
+    this.assertCardInfo('POST /quick/deposit/submit');
     if (!this.config.UPAY_INVOICE_DEPOSITS_ENABLED || !body || Object.keys(body).sort().join(',') !== 'amount,chainId,coinId,ditchCode' ||
         !/^[A-Za-z0-9_-]{1,128}$/.test(body.coinId) || !/^[A-Za-z0-9_-]{1,128}$/.test(body.chainId) || body.ditchCode !== 'PTF' ||
         !Number.isFinite(body.amount) || body.amount < 1 || body.amount > 100_000 || !/^\d+(?:\.\d{1,6})?$/.test(String(body.amount))) {
@@ -246,6 +261,7 @@ export class UpayClient {
   // The panel checks this credential separately before its financial submission.
   // Keep this fixed endpoint outside both the replayable reads and mutation APIs.
   async validatePaymentPassword(): Promise<{ valid: true }> {
+    this.assertCardInfo('POST /asset/checkPinCode');
     const pin = this.config.UPAY_PAYMENT_PASSWORD;
     if (!/^\d{6}$/.test(pin ?? '')) throw new UpayError('Configure a six digit UPay payment password before validation', false);
     const info = await this.loginInfo();

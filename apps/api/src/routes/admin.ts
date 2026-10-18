@@ -32,7 +32,8 @@ export const adminRoutes = (services: Services): FastifyPluginAsync => async app
   });
   app.get('/clients/:userId/provider-cards', async request => {
     const { userId } = parse(target, request.params);
-    return services.manualAdmin.providerCards(request.userId, userId);
+    const { customerNo } = parse(z.object({ customerNo: providerId.optional() }).strict(), request.query);
+    return services.manualAdmin.providerCards(request.userId, userId, customerNo);
   });
   app.post('/clients/:userId/kyc', async request => {
     const { userId } = parse(target, request.params);
@@ -41,12 +42,32 @@ export const adminRoutes = (services: Services): FastifyPluginAsync => async app
   });
   app.post('/clients/:userId/reject', async request => {
     const { userId } = parse(target, request.params);
-    const input = parse(z.object({ submissionId: z.uuid(), reason: z.string().trim().min(1).max(500) }).strict(), request.body);
+    const input = parse(z.object({ submissionId: z.uuid().optional(), reason: z.string().trim().min(1).max(500) }).strict(), request.body);
     return services.manualAdmin.rejectKyc(request.userId, userId, input);
+  });
+  app.get('/wallet-transfers', async () => services.feePayments.unmatched());
+  app.post('/wallet-transfers/:id/assign', async request => {
+    const { id } = parse(z.object({ id: z.uuid() }).strict(), request.params);
+    const { query } = parse(z.object({ query: z.string().trim().min(1).max(64) }).strict(), request.body);
+    const client = await services.manualAdmin.client(request.userId, query);
+    return services.feePayments.assign(request.userId, id, client.userId);
+  });
+  app.post('/clients/:userId/requests/:operationId', async request => {
+    const { userId, operationId } = parse(z.object({ userId: z.uuid(), operationId: z.uuid() }).strict(), request.params);
+    const input = parse(z.union([z.object({ done: z.literal(true) }).strict(), z.object({ done: z.literal(false), reason: z.string().trim().min(1).max(300) }).strict()]), request.body);
+    await services.cards.resolveManualRequest(request.userId, userId, operationId, input);
+    return services.manualAdmin.client(request.userId, userId);
+  });
+  app.post('/clients/:userId/cards/:cardId/topup-addresses', async request => {
+    const { userId, cardId } = parse(z.object({ userId: z.uuid(), cardId: z.uuid() }).strict(), request.params);
+    const address = z.string().trim().max(64).optional();
+    const input = parse(z.object({ USDT_TRC20: address, USDT_ERC20: address, USDT_BEP20: address, USDC_ERC20: address, USDC_BEP20: address }).strict(), request.body);
+    return services.manualAdmin.setTopupAddresses(request.userId, userId, cardId, input);
   });
   app.post('/clients/:userId/card', async request => {
     const { userId } = parse(target, request.params);
-    const input = parse(z.object({ operationId: z.uuid(), partnerCardId: providerId, orderNo: providerId }).strict(), request.body);
+    const input = parse(z.object({ operationId: z.uuid(), customerNo: providerId.optional(), cardNumber: z.string().trim().regex(/^[\d ]{13,23}$/),
+      expiryMonth: z.number().int().min(1).max(12), expiryYear: z.number().int().min(0).max(2100), cvv: z.string().regex(/^\d{3,4}$/) }).strict(), request.body);
     return services.manualAdmin.bindCard(request.userId, userId, input);
   });
 };

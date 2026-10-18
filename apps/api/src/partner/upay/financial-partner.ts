@@ -335,7 +335,7 @@ export class UpayFinancialPartner implements CardPartner {
     });
   }
 
-  private async setState(partnerCardId: string, frozen: boolean, reference?: string, beforeSubmit?: () => Promise<void>): Promise<void> {
+  private async setState(partnerCardId: string, frozen: boolean, reference?: string, beforeSubmit?: () => Promise<void>, customerNo?: string): Promise<void> {
     this.assertWriteReady();
     if (!reference) throw new PartnerError('An operation reference is required for UPay card state changes', false);
     const kind = frozen ? 'freeze' : 'unfreeze';
@@ -344,13 +344,23 @@ export class UpayFinancialPartner implements CardPartner {
     if (!previous) {
       await this.submit(reference, kind, '/card/thawFrozen', { pinCode: await this.pin(), agentCustomerCardIds: [partnerCardId], state: frozen ? 1 : 2 }, { agentCustomerCardId: partnerCardId }, beforeSubmit);
     }
-    const state = await this.getCardState(partnerCardId);
+    const state = customerNo ? await this.listedCardState(partnerCardId, customerNo) : await this.getCardState(partnerCardId);
     if (state !== (frozen ? 'frozen' : 'active')) throw new PartnerPendingError();
     await this.journal.record(reference, { state: 'confirmed' });
   }
-  freezeCard(partnerCardId: string, reference?: string, beforeSubmit?: () => Promise<void>): Promise<void> { return this.setState(partnerCardId, true, reference, beforeSubmit); }
-  unfreezeCard(partnerCardId: string, reference?: string, beforeSubmit?: () => Promise<void>): Promise<void> { return this.setState(partnerCardId, false, reference, beforeSubmit); }
-  async getCardState(partnerCardId: string): Promise<'active' | 'frozen' | null> {
+  freezeCard(partnerCardId: string, reference?: string, beforeSubmit?: () => Promise<void>, customerNo?: string): Promise<void> { return this.setState(partnerCardId, true, reference, beforeSubmit, customerNo); }
+  unfreezeCard(partnerCardId: string, reference?: string, beforeSubmit?: () => Promise<void>, customerNo?: string): Promise<void> { return this.setState(partnerCardId, false, reference, beforeSubmit, customerNo); }
+  // The card state as this customer's card list shows it: the only card read allowed with manual issuance.
+  private async listedCardState(partnerCardId: string, customerNo: string): Promise<'active' | 'frozen' | null> {
+    return this.observe(async () => {
+      const rows = (await this.pages('/card/list', 'GET', { customerNo })).filter(row => identifier(row.agentCustomerCardId) === partnerCardId && identifier(row.customerNo) === customerNo);
+      if (rows.length !== 1) return null;
+      const state = Number(rows[0]!.state ?? rows[0]!.cardStatus);
+      return state === 1 ? 'active' : state === 4 ? 'frozen' : null;
+    });
+  }
+  async getCardState(partnerCardId: string, customerNo?: string): Promise<'active' | 'frozen' | null> {
+    if (customerNo) return this.listedCardState(partnerCardId, customerNo);
     return this.observe(async () => {
     const detail = await this.cardDetail(partnerCardId);
     const state = Number(detail.cardStatus ?? detail.state);
@@ -400,6 +410,13 @@ export class UpayFinancialPartner implements CardPartner {
     }
     });
   }
+  async getCardBalance(partnerCardId: string, customerNo: string): Promise<bigint | null> {
+    const rows = await this.pages('/card/list', 'GET', { customerNo });
+    const matches = rows.filter(row => identifier(row.agentCustomerCardId) === partnerCardId && identifier(row.customerNo) === customerNo);
+    if (matches.length !== 1 || (matches[0]!.symbol !== undefined && matches[0]!.symbol !== 'USD')) return null;
+    try { return exactCents(matches[0]!.balance, 'card balance'); } catch { return null; }
+  }
+
   async listTransactions(partnerCardId: string): Promise<PartnerTransaction[]> {
     const rows = await this.pages('/card/getPageToTransaction', 'POST', { agentCustomerCardId: partnerCardId });
     const result: PartnerTransaction[] = [];

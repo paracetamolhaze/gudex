@@ -94,7 +94,7 @@ describe('customer card issuance progress', () => {
   it('shows a neutral unknown issuance result without a raw operation ID or a false success', () => {
     const html = progress();
     expect(html).toContain('Сообщим вам в Telegram, когда проверка завершится.');
-    expect(html).not.toContain('Адрес для карты');
+    expect(html).not.toContain('Сохранить адрес');
     expect(html).not.toContain('Завершаем выпуск');
     expect(html).not.toContain(operationId);
     expect(html).not.toContain('зарезервирован');
@@ -104,7 +104,7 @@ describe('customer card issuance progress', () => {
     const html = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(CardScreen)));
     expect(html).toContain('Выпуск карты');
     expect(html).toContain('Сообщим вам в Telegram, когда проверка завершится.');
-    expect(html).not.toContain('Адрес для карты');
+    expect(html).not.toContain('Сохранить адрес');
     expect(html).not.toContain('Завершаем выпуск');
     expect(html).not.toContain('На проверке');
     expect(html).not.toContain('Карта готова');
@@ -164,7 +164,7 @@ describe('customer card issuance progress', () => {
       fixture.operation = { ...fixture.operation!, status, fulfillmentMode: status === 'pending' ? 'manual' : 'automatic' };
       fixture.card = { ...fixture.card!, pendingOperationStatus: status };
       for (const html of [progress(), renderToStaticMarkup(createElement(MemoryRouter, null, createElement(CardScreen)))]) {
-        expect(html).not.toContain('Адрес для карты');
+        expect(html).not.toContain('Сохранить адрес');
         expect(html).not.toContain('Завершаем выпуск');
         expect(html).not.toContain('обновится автоматически');
         expect(html).toContain('Telegram');

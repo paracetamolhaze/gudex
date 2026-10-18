@@ -155,7 +155,7 @@ function CardView({ card }: { card: CardDto }) {
             <span className="display mono">{fmt.amount(card.balance, 'USD')}</span>
           </div>
           <div className="actions">
-            <ActionButton icon="plus" label={t('card.topup')} disabled={!active || !config?.integration.capabilities.topup} onClick={() => navigate(`/card/topup?cardId=${card.id}`)} />
+            <ActionButton icon="plus" label={t('card.topup')} disabled={!active || !(config?.integration.capabilities.topup || card.topupAddresses?.length)} onClick={() => navigate(`/card/topup?cardId=${card.id}`)} />
             <ActionButton
               icon={reveal.details ? 'eyeOff' : 'eye'}
               label={reveal.details ? t('card.hideDetails') : t('card.details')}
@@ -181,6 +181,7 @@ function CardView({ card }: { card: CardDto }) {
       {setFrozen.error ? <Notice tone="danger" text={fmt.error(setFrozen.error)} /> : null}
       {statusOp.error ? <QueryError error={statusOp.error} onRetry={() => void statusOp.refetch()} /> : null}
       {statusOp.data?.status === 'failed' ? <Notice tone="danger" text={t('card.statusFailed')} /> : null}
+      {statusOp.data?.fulfillmentMode === 'manual' && statusOp.data.status === 'pending' ? <Notice text={t('card.statusManual')} /> : null}
       {statusOp.data?.status === 'unknown' ? <Notice tone="warning" text={t('card.statusUnknown')} action={<Button small variant="ghost" title={t('common.refresh')} onClick={() => void statusOp.refetch()} />} /> : null}
 
       {config?.devTools && config.integration.cardPartner === 'mock' && active ? (

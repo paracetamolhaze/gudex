@@ -3,6 +3,7 @@ import type { Deps } from '../app';
 import { appSettings } from '../db/schema';
 import { enqueue } from '../queue/queue';
 import type { BotService } from '../telegram/bot-service';
+import type { FeePaymentService } from '../services/fee-payments';
 import { requireOps } from './ops-auth';
 
 export const CRON_HEARTBEAT_KEY = 'cron_heartbeat';
@@ -27,7 +28,7 @@ export function cronReadiness(value: unknown, now = Date.now(), schedule = proce
 }
 
 export const telegramRoutes =
-  (deps: Deps, botService: BotService): FastifyPluginAsync =>
+  (deps: Deps, botService: BotService, feePayments?: FeePaymentService): FastifyPluginAsync =>
   async (app) => {
     // Вебхук бота. Telegram присылает секрет в заголовке — без него запрос игнорируем.
     app.post('/telegram/webhook', async (request, reply) => {
@@ -50,7 +51,8 @@ export const telegramRoutes =
       requireOps(request, deps.config, true);
       await deps.db.transaction(async tx => {
         await enqueue(tx, 'cards.sync_all', {}, { dedupeKey: 'cards.sync_all', maxAttempts: 1 });
-        if (deps.config.CARD_PARTNER === 'upay' && deps.depositInvoices?.configured && !deps.config.DEV_TOOLS) {
+        await feePayments?.enqueueScan(tx);
+        if (deps.config.CARD_PARTNER === 'upay' && deps.depositInvoices?.configured && !deps.config.DEV_TOOLS && deps.config.CARD_ISSUANCE_MODE !== 'manual') {
           await enqueue(tx, 'deposit.invoices.sync_all', {}, { dedupeKey: 'deposit.invoices.sync_all', maxAttempts: 1 });
         }
         const tick = new Date();

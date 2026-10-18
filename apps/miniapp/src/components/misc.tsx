@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { type ActivityItemDto, type Locale, type Network, NETWORKS, type WalletAsset, type WalletDto } from '@gudex/shared';
 import { setLocale } from '../i18n';
 import { shortAddress, useFormat } from '../lib/format';
-import { useConfig, useMe, useNotice } from '../lib/queries';
+import { useActivity, useCards, useConfig, useMe, useNotice } from '../lib/queries';
 import { haptic } from '../lib/telegram';
 import { AssetIcon } from './AssetIcon';
 import { Icon, type IconName } from './Icon';
@@ -87,18 +87,55 @@ export function KycBanner() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { data: me } = useMe();
+  const { data: config } = useConfig();
+  const { data: cards } = useCards();
   const status = me?.kyc.status;
   if (!status || status === 'approved') return null;
-  const text = { none: t('home.kycNeeded'), pending: me?.kyc.submissionState === 'unknown' ? t('kyc.unknownTitle') :
-    me?.kyc.submissionState === 'manual_review' ? t('kyc.pendingText') : t('home.kycPending'), unknown: t('kyc.unknownTitle'), rejected: t('home.kycRejected') }[status];
+  const application = config?.integration.issuanceMode === 'manual';
+  // A new client starts from the «Get a card» offer on the home screen, which opens the application.
+  if (application && status === 'none') return null;
+  const unpaid = application && cards !== undefined && !cards.some(card => card.status === 'pending' && card.pendingFulfillmentMode === 'manual');
+  const text = { none: t(application ? 'home.applicationNeeded' : 'home.kycNeeded'), pending: me?.kyc.submissionState === 'unknown' ? t('kyc.unknownTitle') :
+    me?.kyc.submissionState === 'manual_review' ? t(unpaid ? 'home.applicationUnpaid' : 'home.applicationPending') : t('home.kycPending'), unknown: t('kyc.unknownTitle'),
+    rejected: t(application ? 'home.applicationRejected' : 'home.kycRejected') }[status];
   return (
     <button className="link" style={{ color: 'inherit', textAlign: 'left' }} onClick={() => navigate('/kyc')}>
       <Notice
         tone={status === 'rejected' ? 'danger' : 'info'}
         icon="shield"
         text={text}
-        action={status === 'pending' ? undefined : <Icon name="chevronRight" color="var(--muted)" size={18} />}
+        action={status === 'pending' && !unpaid ? undefined : <Icon name="chevronRight" color="var(--muted)" size={18} />}
       />
+    </button>
+  );
+}
+
+const CARD_ACTIVITY_SEEN_KEY = 'gudex.cardActivitySeenAt';
+
+// Card purchases and refunds are shown inside the Mini App instead of Telegram messages:
+// a notice lists operations newer than the last time the client looked at them.
+export function CardActivityNotice() {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const fmt = useFormat();
+  const { data } = useActivity(20);
+  let seen = 0;
+  try {
+    seen = Number(localStorage.getItem(CARD_ACTIVITY_SEEN_KEY) ?? 0);
+    if (!seen) localStorage.setItem(CARD_ACTIVITY_SEEN_KEY, String(Date.now()));
+  } catch { /* storage may be unavailable; the history still shows everything */ }
+  if (!seen || !data) return null;
+  const fresh = data.filter(item => (item.kind === 'card_purchase' || item.kind === 'card_refund') && Date.parse(item.createdAt) > seen);
+  if (!fresh.length) return null;
+  const latest = fresh[0]!;
+  const open = () => {
+    try { localStorage.setItem(CARD_ACTIVITY_SEEN_KEY, String(Date.now())); } catch { /* ignore */ }
+    navigate('/history');
+  };
+  return (
+    <button className="link" style={{ color: 'inherit', textAlign: 'left' }} onClick={open}>
+      <Notice icon="card" text={t('home.cardActivity', { count: fresh.length, merchant: latest.merchant ?? '', amount: fmt.amount(latest.amount, 'USD') })}
+        action={<Icon name="chevronRight" color="var(--muted)" size={18} />} />
     </button>
   );
 }

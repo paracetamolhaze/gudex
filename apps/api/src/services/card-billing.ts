@@ -9,6 +9,7 @@ import { AppError, parse } from '../lib/errors';
 import type { UpayClient } from '../partner/upay/client';
 import { UpayError } from '../partner/upay/transport';
 import { assertBillingCallingCodeAllowed } from '../partner/upay/issuance-restrictions';
+import { BILLING_COUNTRIES } from '../lib/countries';
 
 type BillingApi = Pick<UpayClient, 'configured' | 'readRequest' | 'submitRequest'>;
 type Profile = typeof kycProfiles.$inferSelect;
@@ -94,6 +95,8 @@ export class CardBillingService {
     return form.requiredInfo && typeof form.addressType === 'string' && form.addressType.split(',').filter(Boolean).length > 0;
   }
   async countries(_userId: string): Promise<CardBillingCountryDto[]> {
+    // Manual issuance never reads the provider's catalog: the operator types the address in UPay.
+    if (this.config.CARD_ISSUANCE_MODE === 'manual') return BILLING_COUNTRIES;
     if (!this.live) return [];
     const value = await this.read<unknown>('/common/countryAndRegion', { level: 2, callingCodeOptions: 'true' });
     if (!Array.isArray(value) || !value.length || value.length > 1000) throw new AppError('provider_unavailable', 'Billing countries are unavailable');
@@ -108,6 +111,15 @@ export class CardBillingService {
     }
     return result;
   }
+  // A card application must use a country from the live product list; demo mode has no list.
+  async applicationCountryName(userId: string, countryId: string): Promise<string | null> {
+    const list = await this.countries(userId);
+    if (!list.length) return null;
+    const country = list.find(item => item.id === countryId);
+    if (!country) throw new AppError('validation', 'Select a supported billing country');
+    return country.name;
+  }
+
   async get(userId: string): Promise<CardBillingAddressDto> {
     if (!this.live) return { required: false, status: 'missing', address: null };
     const profile = await this.profile(userId);
