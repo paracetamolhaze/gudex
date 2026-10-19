@@ -3,6 +3,8 @@
 name = "gudex-mail"
 main = "src/index.ts"
 compatibility_date = "2026-10-01"
+# Only Email Routing and the queue call this Worker; it has no public URL.
+workers_dev = false
 
 [vars]
 API_URL = "https://gudex-seven.vercel.app/v1/mail/inbound"
