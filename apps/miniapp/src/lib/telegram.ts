@@ -57,15 +57,14 @@ export function setupTelegram(): void {
   if (!webApp) return;
   webApp.ready();
   webApp.expand();
-  try {
-    webApp.setHeaderColor(BACKGROUND);
-    webApp.setBackgroundColor(BACKGROUND);
-    webApp.setBottomBarColor?.(BACKGROUND);
-    // Иначе свайп вниз по длинной странице сворачивает приложение.
-    if (webApp.isVersionAtLeast('7.7')) webApp.disableVerticalSwipes?.();
-  } catch {
-    // Старые клиенты Telegram поддерживают не всё — это не критично.
-  }
+  // Старые клиенты Telegram поддерживают не всё: каждый вызов отдельно, чтобы отказ одного не отменял остальные.
+  const safe = (call: () => void) => { try { call(); } catch { /* not supported by this client */ } };
+  // До 6.9 шапка принимает только ключи темы, а не цвет.
+  if (webApp.isVersionAtLeast('6.9')) safe(() => webApp.setHeaderColor(BACKGROUND));
+  safe(() => webApp.setBackgroundColor(BACKGROUND));
+  safe(() => webApp.setBottomBarColor?.(BACKGROUND));
+  // Иначе свайп вниз по длинной странице сворачивает приложение.
+  if (webApp.isVersionAtLeast('7.7')) safe(() => webApp.disableVerticalSwipes?.());
 }
 
 const supports = (version: string) => Boolean(webApp?.isVersionAtLeast(version));

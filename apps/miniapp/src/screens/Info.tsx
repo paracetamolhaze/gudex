@@ -84,6 +84,9 @@ export function Tariffs() {
   const { data: config } = useConfig();
   if (!config) return <Loading />;
   const { card } = config;
+  // Manual issuance: the card is topped up on its own UPay addresses and the wallet only pays the issuance,
+  // so in-app top-up, deposit, transfer, withdrawal and referral fees do not apply.
+  const manual = config.integration.issuanceMode === 'manual';
   const limits = [
     { label: t('tariffs.perTransaction'), value: card.limits.perTransactionUsd },
     { label: t('tariffs.daily'), value: card.limits.dailyUsd },
@@ -98,8 +101,10 @@ export function Tariffs() {
       <Surface className="stack">
         <Row label={t('tariffs.issue')} value={fmt.amount(card.issueFeeUsd, 'USD')} />
         <Row label={t('tariffs.service')} value={t('tariffs.free')} />
-        <Row label={t('tariffs.topupFee')} value={`${fmt.percent(card.topupFeeBps / 100)}%`} />
-        <Row label={t('tariffs.topupMin')} value={fmt.amount(card.minTopupUsd, 'USD')} />
+        {manual ? null : <>
+          <Row label={t('tariffs.topupFee')} value={`${fmt.percent(card.topupFeeBps / 100)}%`} />
+          <Row label={t('tariffs.topupMin')} value={fmt.amount(card.minTopupUsd, 'USD')} />
+        </>}
         <Row label={t('tariffs.rate')} value="1 USDT = 1 USDC = $1" />
         <Row label={t('tariffs.maxCards')} value={String(card.maxCardsPerUser)} />
       </Surface>
@@ -115,6 +120,7 @@ export function Tariffs() {
         </>
       ) : null}
 
+      {manual ? null : <>
       <h2 className="heading">{t('tariffs.wallet')}</h2>
       <Surface className="stack">
         <Row label={t('tariffs.deposit')} value={t('tariffs.free')} />
@@ -134,13 +140,14 @@ export function Tariffs() {
         ))}
       </Surface>
       <span className="caption muted">{t('tariffs.withdrawNote')}</span>
+      </>}
     </Page>
   );
 }
 
 // ─── Помощь ──────────────────────────────────────────────────────────────
 
-const FAQ = [1, 2, 3, 4, 5, 6, 7, 8] as const;
+const FAQ = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] as const;
 
 export function Help() {
   const { t } = useTranslation();
@@ -176,7 +183,7 @@ export function Help() {
                 <Icon name="chevronDown" color="var(--muted)" size={18} />
               </span>
             </button>
-            {open === n ? <p className="faq-answer muted">{t(`help.a${n}`)}</p> : null}
+            {open === n ? <p className="faq-answer muted">{t(`help.a${n}`, { fee: config.card.issueFeeUsd })}</p> : null}
           </div>
         ))}
       </Surface>

@@ -14,6 +14,7 @@ import { BootError, Lock, Onboarding, Outside } from './screens/Entry';
 import { Home } from './screens/Home';
 import { Buy } from './screens/Buy';
 import { Help, Referral, Tariffs } from './screens/Info';
+import { LegalScreen, TermsGate } from './screens/Legal';
 import { Transfer, Withdraw } from './screens/Money';
 import { History, Kyc, PinChange, Profile, WalletPay } from './screens/Other';
 import { CardIssue, CardTopup, Deposit } from './screens/Wallet';
@@ -34,6 +35,9 @@ function MainApp() {
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [location.pathname]);
+
+  // Clients who signed up before the documents existed accept them once before using the app.
+  if (me && me.termsAccepted === false) return <TermsGate />;
 
   return (
     <>
@@ -58,6 +62,7 @@ function MainApp() {
         <Route path="/tariffs" element={<Tariffs />} />
         <Route path="/help" element={<Help />} />
         <Route path="/buy" element={<Buy />} />
+        <Route path="/legal/:kind" element={<LegalScreen />} />
       </Routes>
       {TAB_PATHS.includes(location.pathname) ? <TabBar /> : null}
     </>

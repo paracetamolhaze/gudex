@@ -99,7 +99,7 @@ export function KycBanner() {
     me?.kyc.submissionState === 'manual_review' ? t(unpaid ? 'home.applicationUnpaid' : 'home.applicationPending') : t('home.kycPending'), unknown: t('kyc.unknownTitle'),
     rejected: t(application ? 'home.applicationRejected' : 'home.kycRejected') }[status];
   return (
-    <button className="link" style={{ color: 'inherit', textAlign: 'left' }} onClick={() => navigate('/kyc')}>
+    <button className="link" style={{ color: 'inherit', textAlign: 'left', fontWeight: 400 }} onClick={() => navigate('/kyc')}>
       <Notice
         tone={status === 'rejected' ? 'danger' : 'info'}
         icon="shield"
@@ -133,7 +133,7 @@ export function CardActivityNotice() {
     navigate('/history');
   };
   return (
-    <button className="link" style={{ color: 'inherit', textAlign: 'left' }} onClick={open}>
+    <button className="link" style={{ color: 'inherit', textAlign: 'left', fontWeight: 400 }} onClick={open}>
       <Notice icon="card" text={t('home.cardActivity', { count: fresh.length, merchant: latest.merchant ?? '', amount: fmt.amount(latest.amount, 'USD') })}
         action={<Icon name="chevronRight" color="var(--muted)" size={18} />} />
     </button>

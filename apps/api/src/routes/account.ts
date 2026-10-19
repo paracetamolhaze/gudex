@@ -1,7 +1,7 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull, ne, or } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { type MeDto, NETWORK_IDS, WALLET_ASSETS } from '@gudex/shared';
+import { type MeDto, NETWORK_IDS, TERMS_VERSION, WALLET_ASSETS } from '@gudex/shared';
 import type { Deps, Services } from '../app';
 import { users } from '../db/schema';
 import { AppError, parse } from '../lib/errors';
@@ -89,10 +89,20 @@ export const profileRoutes =
         locale: user.locale as MeDto['locale'],
         hasPin: user.pinHash !== null,
         kyc: await services.kyc.get(userId),
+        termsAccepted: user.termsVersion === TERMS_VERSION,
       };
     };
 
     app.get('/me', async (request) => me(request.userId));
+
+    // Accepted on the first screen, before the passcode exists, so a locked session may call it.
+    app.post('/me/terms', async (request) => {
+      parse(z.object({ version: z.literal(TERMS_VERSION) }).strict(), request.body);
+      // The first acceptance of a version is the proof; repeating it changes nothing.
+      await deps.db.update(users).set({ termsVersion: TERMS_VERSION, termsAcceptedAt: new Date() })
+        .where(and(eq(users.id, request.userId), or(isNull(users.termsVersion), ne(users.termsVersion, TERMS_VERSION))));
+      return me(request.userId);
+    });
 
     app.patch('/me', async (request) => {
       const body = parse(meBody, request.body);
@@ -125,6 +135,7 @@ export const accountRoutes =
     app.post('/kyc', async (request) => {
       const body = parse(kycBody, request.body);
       assertAdult(body.birthDate);
+      await services.auth.assertTermsAccepted(request.userId);
       return services.kyc.submit(request.userId, body);
     });
 
@@ -142,6 +153,7 @@ export const accountRoutes =
     app.post('/card-application', async (request, reply) => {
       const body = parse(applicationBody, request.body);
       assertAdult(body.kyc.birthDate);
+      await services.auth.assertTermsAccepted(request.userId);
       reply.header('Cache-Control', 'no-store');
       reply.status(202);
       return services.cardApplications.submit(request.userId, body);
@@ -149,6 +161,7 @@ export const accountRoutes =
 
     app.post('/card-application/pay', async (request, reply) => {
       const body = parse(z.object({ asset: z.enum(WALLET_ASSETS) }).strict(), request.body);
+      await services.auth.assertTermsAccepted(request.userId);
       reply.header('Cache-Control', 'no-store');
       return services.cardApplications.payFromBalance(request.userId, body.asset);
     });

@@ -95,7 +95,12 @@ export interface MeDto {
   locale: Locale;
   hasPin: boolean;
   kyc: KycDto;
+  /** The client accepted the current Terms of Use and Privacy Policy (TERMS_VERSION). */
+  termsAccepted: boolean;
 }
+
+/** Bump when the Terms of Use or the Privacy Policy change: every client accepts the new text once. */
+export const TERMS_VERSION = '2026-10-19';
 
 export interface BalanceDto {
   asset: WalletAsset;

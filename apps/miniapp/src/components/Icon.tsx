@@ -30,7 +30,7 @@ const ICONS = {
   arrowUp: <path d="M12 20V4M5 11l7-7 7 7" />,
   arrowLeft: <path d="M15 6l-6 6 6 6" />,
   chevronRight: <path d="M9 6l6 6-6 6" />,
-  snowflake: <path d="M12 2v20M3.3 7l17.4 10M3.3 17 20.7 7M9 4l3 2 3-2M9 20l3-2 3 2" />,
+  snowflake: <path d="M2 12h20M12 2v20M20 16l-4-4 4-4M4 8l4 4-4 4M16 4l-4 4-4-4M8 20l4-4 4 4" />,
   eye: (
     <>
       <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
@@ -63,7 +63,12 @@ const ICONS = {
       <path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18" />
     </>
   ),
-  logout: <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H3" />,
+  document: (
+    <>
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+      <path d="M14 3v5h5M9 13h6M9 17h6" />
+    </>
+  ),
   bag: (
     <>
       <path d="M5 8h14l-1 12H6L5 8Z" />
@@ -153,7 +158,9 @@ export function Icon({
   strokeWidth?: number;
 }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    // Large icons keep the visual line of a 24px icon instead of growing heavier with their size.
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={size > 24 ? strokeWidth * 24 / size : strokeWidth}
+      strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       {ICONS[name]}
     </svg>
   );

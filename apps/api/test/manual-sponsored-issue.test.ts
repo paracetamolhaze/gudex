@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { TERMS_VERSION } from '@gudex/shared';
 import { eq } from 'drizzle-orm';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cardIssueSponsorships, cardOperations, cards, kycProfiles, users } from '../src/db/schema';
@@ -60,6 +61,7 @@ describe('first issuance paid by the broker', () => {
   it('removes the owner\'s waiting application on request; the new one is again paid by the broker', async () => {
     ctx = await createTestContext(undefined, { env });
     const locked = await telegramLogin(ctx, 514468501);
+    await api(ctx, locked.accessToken).post('/v1/me/terms', { version: TERMS_VERSION });
     const token = (await api(ctx, locked.accessToken).post('/v1/security/pin', { pin: TEST_PIN })).body.accessToken as string;
     const http = api(ctx, token);
     const me = await http.get('/v1/me');

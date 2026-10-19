@@ -14,7 +14,9 @@ import { useActivity, useCardSensitive, useCards, useConfig, useMe, useOperation
 import { haptic, platform } from '../lib/telegram';
 
 const DETAILS_VISIBLE_MS = 30_000;
-export const walletName = platform === 'android' ? 'Google Pay' : 'Apple Pay';
+// Apple Pay only on Apple devices, Google Pay on Android; desktop and web clients see both.
+export const walletKind: 'apple' | 'google' | 'both' = platform === 'android' ? 'google' : platform === 'ios' || platform === 'macos' ? 'apple' : 'both';
+export const walletName = walletKind === 'google' ? 'Google Pay' : walletKind === 'apple' ? 'Apple Pay' : 'Apple Pay / Google Pay';
 
 // Реквизиты карты: только после кода-пароля или биометрии, скрываются через 30 секунд.
 export function useRevealDetails(cardId: string) {
@@ -142,11 +144,11 @@ function CardView({ card }: { card: CardDto }) {
         </Surface>
       ) : card.status === 'pending' ? (
         <Surface className="promo">
-          <Mascot pose="thinking" size={110} />
           <div className="stack-sm grow">
             <span className="body-medium">{t('issue.pendingTitle')}</span>
             <span className="caption muted">{t('issue.pendingText')}</span>
           </div>
+          <Mascot pose="thinking" size={110} />
         </Surface>
       ) : (
         <>
@@ -175,6 +177,7 @@ function CardView({ card }: { card: CardDto }) {
         </>
       )}
 
+      {active && config?.integration.issuanceMode === 'manual' && !card.topupAddresses?.length ? <Notice text={t('integration.topupUnavailable')} /> : null}
       {reveal.details ? <CardDetails details={reveal.details} /> : null}
       {reveal.error ? <Notice tone="danger" text={fmt.error(reveal.error)} /> : null}
       {config && !config.integration.capabilities.freeze && (active || frozen) ? <Notice tone="warning" text={t('integration.freezeUnavailable')} /> : null}

@@ -1,11 +1,10 @@
 import QRCode from 'qrcode';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { CardTopupAddressDto } from '@gudex/shared';
+import { NETWORKS, type CardTopupAddressDto } from '@gudex/shared';
 import { CopyRow } from './FeePayment';
 import { Notice, Segmented, Surface } from './ui';
 
-const networkNames: Record<CardTopupAddressDto['network'], string> = { TRC20: 'Tron (TRC20)', ERC20: 'Ethereum (ERC20)', BEP20: 'BNB Chain (BEP20)' };
 
 // The crypto addresses UPay gives this card: the client sends USDT or USDC there to top it up.
 export function CardTopupAddresses({ addresses }: { addresses: CardTopupAddressDto[] }) {
@@ -31,6 +30,6 @@ export function CardTopupAddresses({ addresses }: { addresses: CardTopupAddressD
     <div style={{ display: 'flex', justifyContent: 'center' }}><div className="qr" dangerouslySetInnerHTML={{ __html: qr }} /></div>
     <span className="caption muted">{t('topup.cardAddress')}</span>
     <CopyRow value={selected.address} label={t('fee.copyAddress')} />
-    <Notice tone="warning" text={t('topup.cardAddressWarning', { asset: selected.asset, network: networkNames[selected.network] })} />
+    <Notice tone="warning" text={t('topup.cardAddressWarning', { asset: selected.asset, network: NETWORKS[selected.network].name })} />
   </Surface>;
 }

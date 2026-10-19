@@ -139,8 +139,8 @@ function ClientReview({ client, onUpdated }: { client: AdminClient; onUpdated: (
   const digits = cardNumber.replace(/\D/g, '');
   const expiryMatch = /^(\d{2})\/(\d{2})$/.exec(expiry);
   const mailValid = clientMailValid(mail, client.mail.domain);
-  const mailHint = client.mail.domain ? `Любое имя на @${client.mail.domain} — заранее создавать ничего не нужно. Этот же email укажите клиенту в UPay: коды 3DS придут ему в бота.`
-    : 'Домен почты ещё не настроен: коды на эту почту клиенту не придут.';
+  // Only a missing mail domain needs a word: then codes cannot reach the client.
+  const mailHint = client.mail.domain ? undefined : 'Домен почты не настроен: коды на эту почту не придут.';
   const cardReady = /^\d{13,19}$/.test(digits) && Boolean(expiryMatch) && /^\d{3,4}$/.test(cvv) && (!reviewing || identifierValid(customerNo)) && mailValid;
   const run = async (action: (token: string) => Promise<AdminClient>, prompt: string, completed: string, reset: () => void) => {
     if (working.current) return;
@@ -227,7 +227,6 @@ function ClientReview({ client, onUpdated }: { client: AdminClient; onUpdated: (
 
     {!canLink && (kyc || client.mail.address) ? <Surface className="stack">
       <h2 className="heading">Почта для кодов</h2>
-      <span className="caption muted">Коды UPay с этой почты бот присылает клиенту в Telegram. Меняете здесь — поменяйте и в UPay.</span>
       <Field label="Почта" hint={mailHint} value={mail} type="email" maxLength={254} disabled={busy} autoComplete="off" spellCheck={false}
         error={mail && !mailValid ? 'Проверьте почту' : null} onChange={event => setMail(event.target.value.trim().toLowerCase())} />
       <Button title="Сохранить почту" disabled={busy || !mailValid || mail === client.mail.address}

@@ -34,6 +34,7 @@ import type {
   WalletDto,
   WithdrawalDto,
 } from '@gudex/shared';
+import { TERMS_VERSION } from '@gudex/shared';
 import { request } from './api';
 import { fundingEnabled } from './funding';
 import { sendCardApplication, sendKycSubmission, type CardApplicationSubmission, type KycSubmission, type KycUploadCache } from './kyc';
@@ -286,6 +287,18 @@ export function useRecheckKyc() {
     onSuccess: (kyc) => client.setQueryData<MeDto>(keys.me, (me) => me ? { ...me, kyc } : me),
     onSettled: () => client.invalidateQueries({ queryKey: keys.me }),
   });
+}
+
+// Accepts the current Terms of Use and Privacy Policy (also before the passcode exists, on the first screen).
+export function acceptTerms(): Promise<MeDto> {
+  return request<MeDto>('/v1/me/terms', { method: 'POST', body: { version: TERMS_VERSION } });
+}
+
+export function useAcceptTerms() {
+  const client = useQueryClient();
+  // A /me refetch already in flight would bring back termsAccepted: false after the answer.
+  return useMutation({ mutationFn: acceptTerms, onMutate: () => client.cancelQueries({ queryKey: keys.me }),
+    onSuccess: (me) => client.setQueryData(keys.me, me) });
 }
 
 export function useUpdateLocale() {

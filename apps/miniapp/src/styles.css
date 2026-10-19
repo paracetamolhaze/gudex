@@ -63,7 +63,9 @@ button {
   color: inherit;
 }
 
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 
@@ -92,6 +94,12 @@ input {
   gap: 16px;
   padding: 24px;
   text-align: center;
+}
+
+/* Inside a page (PIN change) the page padding already takes 48px of the screen. */
+.page > .center-screen {
+  min-height: calc(var(--tg-viewport-stable-height, 100dvh) - 48px);
+  padding: 0;
 }
 
 .row {
@@ -234,6 +242,32 @@ input {
   background: var(--warning-bg);
 }
 
+.notice.danger {
+  background: rgba(255, 90, 96, 0.12);
+}
+
+/* Photo pickers in «Верификация»: the native file button styled like the app. */
+.input[type='file'] {
+  height: auto;
+  min-height: 52px;
+  padding: 8px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.input[type='file']::file-selector-button {
+  height: 36px;
+  margin-right: 12px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--primary);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .notice svg {
   flex-shrink: 0;
 }
@@ -259,6 +293,7 @@ input {
   height: 52px;
   border-radius: var(--radius-md);
   border: 0;
+  text-decoration: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -551,7 +586,17 @@ input {
 /* Знакомство при первом открытии: на невысоких экранах убираем подписи, чтобы всё влезло без прокрутки. */
 .welcome {
   --welcome-mascot: clamp(100px, calc(var(--screen-h) * 0.26), 250px);
-  padding-bottom: calc(104px + env(safe-area-inset-bottom));
+  min-height: var(--screen-h);
+  padding-bottom: 0;
+}
+
+/* Consent and «Начать» stay at the bottom of the screen but take their own room, whatever their height. */
+.welcome-footer {
+  position: sticky;
+  bottom: 0;
+  margin: auto -16px 0;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+  background: linear-gradient(to top, var(--bg) 75%, transparent);
 }
 
 .welcome-title {
@@ -720,6 +765,12 @@ input {
   width: 36px;
   height: 36px;
   border-width: 3px;
+}
+
+/* On a blue button a blue arc would be invisible. */
+.btn.primary .spinner {
+  border-color: rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
 }
 
 .qr {
@@ -987,3 +1038,19 @@ input {
 }
 .additional-attempt-ack { display: flex; align-items: flex-start; gap: 12px; line-height: 1.5; cursor: pointer; }
 .additional-attempt-ack input { flex: 0 0 auto; width: 22px; height: 22px; margin: 2px 0 0; accent-color: var(--primary); }
+
+/* ─── Документы и согласие ───────────────────────────────────────────── */
+
+.consent-check { display: flex; align-items: flex-start; gap: 12px; font-size: 14px; line-height: 1.45; color: var(--muted); cursor: pointer; }
+.consent-check input { flex: 0 0 auto; width: 22px; height: 22px; margin: 0; accent-color: var(--primary); }
+.consent-link { display: inline; padding: 0; font-size: inherit; font-weight: 500; color: var(--primary); }
+.legal { display: flex; flex-direction: column; gap: 10px; font-size: 15px; line-height: 1.55; overflow-wrap: anywhere; }
+.legal h2 { margin: 16px 0 0; font-size: 20px; font-weight: 700; }
+.legal h3 { margin: 12px 0 0; font-size: 17px; font-weight: 600; }
+.legal p { margin: 0; color: var(--text); }
+.legal ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.legal li.nested { margin-left: 18px; list-style-type: circle; }
+.legal hr { width: 100%; margin: 12px 0; border: 0; border-top: 1px solid var(--border, rgba(255, 255, 255, 0.08)); }
+.legal-sheet { gap: 12px; z-index: 60; }
+.legal-sheet-body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-bottom: 16px; }
+.terms-gate { text-align: center; }

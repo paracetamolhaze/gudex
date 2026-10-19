@@ -27,7 +27,7 @@ describe('verification preflight', () => {
     const submit = vi.fn(async () => ({ status: 'pending' }));
     const app = Fastify();
     app.setErrorHandler((error, _request, reply) => reply.status(error instanceof AppError ? error.status : 500).send({ error: error instanceof Error ? error.message : 'Internal error' }));
-    await app.register(accountRoutes({ auth: { verifySession: async () => ({ userId: 'user', unlocked: true }) }, kyc: { submit } } as unknown as Services), { prefix: '/v1' });
+    await app.register(accountRoutes({ auth: { verifySession: async () => ({ userId: 'user', unlocked: true }), assertTermsAccepted: async () => {} }, kyc: { submit } } as unknown as Services), { prefix: '/v1' });
     try {
       const response = await app.inject({ method: 'POST', url: '/v1/kyc', headers: { authorization: 'Bearer fixture' },
         payload: { firstName: 'ANNE', lastName: 'NEIL', email: 'anne@example.com', birthDate: '2008-03-01', citizenship: 'KZ' } });

@@ -20,4 +20,8 @@ export function setLocale(locale: Locale): void {
   if (i18n.language !== locale) i18n.changeLanguage(locale);
 }
 
+// Screen readers pronounce the page in the language it is shown in.
+document.documentElement.lang = i18n.language;
+i18n.on('languageChanged', language => { document.documentElement.lang = language; });
+
 export default i18n;

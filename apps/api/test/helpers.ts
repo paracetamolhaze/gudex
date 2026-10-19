@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
+import { TERMS_VERSION } from '@gudex/shared';
 import { buildApp, createServices, type Deps, jobHandlers, type Services } from '../src/app';
 import { loadConfig } from '../src/config';
 import { createDb, type Db } from '../src/db/client';
@@ -108,6 +109,9 @@ export async function telegramLogin(ctx: TestContext, telegramId: number, startP
 export async function registerUser(ctx: TestContext, startParam?: string): Promise<{ token: string; telegramId: number }> {
   const telegramId = nextTelegramId++;
   const locked = await telegramLogin(ctx, telegramId, startParam);
+  // As in the app: the Terms are accepted on the first screen, before the passcode exists.
+  const terms = await api(ctx, locked.accessToken).post('/v1/me/terms', { version: TERMS_VERSION });
+  if (terms.status !== 200) throw new Error(`accept terms failed: ${JSON.stringify(terms.body)}`);
   const res = await api(ctx, locked.accessToken).post('/v1/security/pin', { pin: TEST_PIN });
   if (res.status !== 200) throw new Error(`set pin failed: ${JSON.stringify(res.body)}`);
   return { token: res.body.accessToken, telegramId };

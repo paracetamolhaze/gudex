@@ -5,7 +5,10 @@ import { Mascot } from '../components/Mascot';
 import { LanguageSwitch } from '../components/misc';
 import { PinPad } from '../components/PinPad';
 import { BIOMETRY_ICON, BiometricOffer, PinCreateFlow, usePinError } from '../components/security';
-import { Button } from '../components/ui';
+import { Button, Notice } from '../components/ui';
+import { useFormat } from '../lib/format';
+import { acceptTerms } from '../lib/queries';
+import { TermsConsent } from './Legal';
 import { useSession } from '../lib/session';
 
 // Экраны до входа в приложение: Telegram не открыт / ошибка, первое знакомство, блокировка.
@@ -47,7 +50,24 @@ const FEATURES: { icon: IconName; title: string; text: string }[] = [
 export function Onboarding() {
   const { t } = useTranslation();
   const session = useSession();
+  const fmt = useFormat();
   const [step, setStep] = useState<'intro' | 'pin' | 'biometrics'>('intro');
+  const [agreed, setAgreed] = useState(false);
+  const [accepting, setAccepting] = useState(false);
+  const [acceptError, setAcceptError] = useState<unknown>(null);
+  // The Terms are accepted before the passcode is created; the server keeps the version and the time.
+  const start = async () => {
+    setAccepting(true);
+    setAcceptError(null);
+    try {
+      await acceptTerms();
+      setStep('pin');
+    } catch (error) {
+      setAcceptError(error);
+    } finally {
+      setAccepting(false);
+    }
+  };
 
   if (step === 'pin') {
     return (
@@ -79,18 +99,11 @@ export function Onboarding() {
         ))}
       </div>
       <LanguageSwitch />
-      <div
-        style={{
-          position: 'fixed',
-          left: 0,
-          right: 0,
-          bottom: 0,
-          padding: '16px 16px calc(16px + env(safe-area-inset-bottom))',
-          background: 'linear-gradient(to top, var(--bg) 70%, transparent)',
-        }}
-      >
-        <div style={{ maxWidth: 488, margin: '0 auto' }}>
-          <Button title={t('welcome.start')} onClick={() => setStep('pin')} />
+      <div className="welcome-footer">
+        <div className="stack" style={{ maxWidth: 488, margin: '0 auto' }}>
+          <TermsConsent checked={agreed} disabled={accepting} onChange={setAgreed} />
+          {acceptError ? <Notice tone="danger" text={fmt.error(acceptError)} /> : null}
+          <Button title={t('welcome.start')} disabled={!agreed} loading={accepting} onClick={() => void start()} />
         </div>
       </div>
     </div>

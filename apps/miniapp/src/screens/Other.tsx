@@ -16,8 +16,10 @@ import { isKycBirthDateEligible, kycApplicantValidity, KYC_UPLOAD_MAX_BYTES, typ
 import { useActivity, useCardBillingCountries, useCards, useConfig, useIssueQuote, useKycRequirements, useMe, usePayApplicationFromBalance, useRecheckKyc, useSubmitCardApplication, useSubmitKyc, useUpdateLocale, useWallet } from '../lib/queries';
 import { useSession } from '../lib/session';
 import { useAdminAccess } from '../lib/admin';
-import { haptic, platform } from '../lib/telegram';
-import { CardDetails, useRevealDetails, walletName } from './Card';
+import { haptic } from '../lib/telegram';
+import { APP_VERSION } from '../lib/version';
+import { LegalSheet } from './Legal';
+import { CardDetails, useRevealDetails, walletKind, walletName } from './Card';
 import { BillingAddressFields } from './CardBilling';
 import { FeePaymentPanel } from '../components/FeePayment';
 
@@ -112,11 +114,12 @@ export function Profile() {
       </Surface>
 
       <Surface flush>
-        <button className="list-item" onClick={() => navigate('/referral')}>
+        {/* Manual issuance pays no referral bonus yet: the program stays hidden until it does. */}
+        {config && config.integration.issuanceMode !== 'manual' ? <button className="list-item" onClick={() => navigate('/referral')}>
           <Icon name="gift" color="var(--primary)" />
           <span className="body-medium grow">{t('profile.invite')}</span>
           <Icon name="chevronRight" color="var(--muted)" size={18} />
-        </button>
+        </button> : null}
         <button className="list-item" onClick={() => navigate('/tariffs')}>
           <Icon name="percent" color="var(--primary)" />
           <span className="body-medium grow">{t('profile.tariffs')}</span>
@@ -127,6 +130,15 @@ export function Profile() {
           <span className="body-medium grow">{t('profile.help')}</span>
           <Icon name="chevronRight" color="var(--muted)" size={18} />
         </button>
+      </Surface>
+
+      <h2 className="heading">{t('profile.documents')}</h2>
+      <Surface flush>
+        {(['terms', 'privacy'] as const).map(kind => <button key={kind} className="list-item" onClick={() => navigate(`/legal/${kind}`)}>
+          <Icon name="document" color="var(--primary)" />
+          <span className="body-medium grow">{t(`legal.${kind}`)}</span>
+          <Icon name="chevronRight" color="var(--muted)" size={18} />
+        </button>)}
       </Surface>
 
       <h2 className="heading">{t('security.section')}</h2>
@@ -169,7 +181,7 @@ export function Profile() {
       </Surface>
 
       <span className="caption muted" style={{ textAlign: 'center' }}>
-        {t('profile.version', { version: '0.2.0' })}
+        {t('profile.version', { version: APP_VERSION })}
       </span>
     </Page>
   );
@@ -362,6 +374,7 @@ function KycForm({ rejectionReason }: { rejectionReason: string | null }) {
   const [selfie, setSelfie] = useState<File | null>(null);
   const [billing, setBilling] = useState<CardBillingAddressInput>({ countryId: '', postalCode: '', address: '' });
   const [touched, setTouched] = useState(false);
+  const [policyOpen, setPolicyOpen] = useState(false);
   const fee = application ? config.data?.integration.feeWallet?.fee ?? null : null;
   useEffect(() => {
     // Only when this coin would be paid from the wallet: a broker-covered issuance stays as it is.
@@ -523,6 +536,10 @@ function KycForm({ rejectionReason }: { rejectionReason: string | null }) {
             { onSuccess: () => haptic.success(), onError: () => haptic.error() });
         }}
       />
+      <span className="caption muted" style={{ textAlign: 'center' }}>{t('kyc.consentNote')}{' '}
+        <button type="button" className="link caption" onClick={() => setPolicyOpen(true)}>{t('legal.privacy')}</button></span>
+      {/* Over the form: leaving the route would drop everything typed and the chosen photos. */}
+      {policyOpen ? <LegalSheet kind="privacy" onClose={() => setPolicyOpen(false)} /> : null}
     </Page>
   );
 }
@@ -535,23 +552,24 @@ export function WalletPay() {
   const { data: config } = useConfig();
   const reveal = useRevealDetails(params.get('cardId') ?? '');
   const fmt = useFormat();
-  const android = platform === 'android';
-  const steps = android
-    ? [t('walletPay.android1'), t('walletPay.android2'), t('walletPay.android3'), t('walletPay.android4')]
-    : [t('walletPay.ios1'), t('walletPay.ios2'), t('walletPay.ios3'), t('walletPay.ios4')];
+  const guides = [
+    ...(walletKind !== 'google' ? [{ title: 'Apple Pay', steps: [t('walletPay.ios1'), t('walletPay.ios2'), t('walletPay.ios3'), t('walletPay.ios4')] }] : []),
+    ...(walletKind !== 'apple' ? [{ title: 'Google Pay', steps: [t('walletPay.android1'), t('walletPay.android2'), t('walletPay.android3'), t('walletPay.android4')] }] : []),
+  ];
 
   return (
     <Page title={walletName}>
       <Mascot pose="pay" size={200} motion="pop" />
       <span>{t('walletPay.intro', { wallet: walletName })}</span>
-      <Surface className="stack">
-        {steps.map((step, i) => (
+      {guides.map(guide => <Surface key={guide.title} className="stack">
+        {guides.length > 1 ? <span className="body-medium" style={{ fontWeight: 600 }}>{guide.title}</span> : null}
+        {guide.steps.map((step, i) => (
           <div key={step} className="row" style={{ alignItems: 'flex-start' }}>
             <span className="step-number">{i + 1}</span>
             <span style={{ paddingTop: 3 }}>{step}</span>
           </div>
         ))}
-      </Surface>
+      </Surface>)}
       {reveal.details ? (
         <CardDetails details={reveal.details} />
       ) : (

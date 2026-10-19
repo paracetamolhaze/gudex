@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { haptic } from '../lib/telegram';
 import { Icon, type IconName } from './Icon';
 
@@ -22,6 +23,7 @@ export function PinPad({
   biometryIcon?: IconName;
   onBiometrics?: () => void;
 }) {
+  const { t } = useTranslation();
   const [value, setValue] = useState('');
   const [busy, setBusy] = useState(false);
   const [shake, setShake] = useState(0);
@@ -62,14 +64,14 @@ export function PinPad({
         {KEYS.map((key) => {
           if (key === 'bio') {
             return (
-              <button key={key} className={`key plain${onBiometrics ? '' : ' hidden'}`} onClick={() => press(key)} aria-label="Biometrics">
+              <button key={key} className={`key plain${onBiometrics ? '' : ' hidden'}`} onClick={() => press(key)} aria-label={t('security.biometricsButton')}>
                 <Icon name={biometryIcon ?? 'faceId'} color="var(--primary)" size={30} />
               </button>
             );
           }
           if (key === 'del') {
             return (
-              <button key={key} className="key plain" onClick={() => press(key)} aria-label="Delete">
+              <button key={key} className="key plain" onClick={() => press(key)} aria-label={t('common.delete')}>
                 <Icon name="backspace" size={26} />
               </button>
             );

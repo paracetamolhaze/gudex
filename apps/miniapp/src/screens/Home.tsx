@@ -20,6 +20,10 @@ export function Home() {
   // With manual issuance money is not sent out of the app: no transfer or withdrawal.
   const moneyOut = config !== undefined && config.integration.issuanceMode !== 'manual';
   const card = cards.data?.[0];
+  // Manual issuance: «Пополнить» opens the card's own top-up addresses, so it shows only once the card has them.
+  const canDeposit = config !== undefined && (config.integration.issuanceMode === 'manual'
+    ? Boolean(cards.data?.some(item => item.status === 'active' && item.topupAddresses?.length))
+    : config.integration.depositFlow !== 'disabled' || config.integration.depositInvoiceRead);
   const clientReady = me !== undefined && cards.data !== undefined;
   const openCardFlow = () => navigate(me?.kyc.status === 'approved' ? '/card/issue' : '/kyc');
 
@@ -53,8 +57,8 @@ export function Home() {
         </Surface>
       ) : null}
 
-      {clientReady ? <div className="actions">
-        <ActionButton icon="arrowDown" label={t('home.deposit')} onClick={() => navigate('/deposit')} />
+      {clientReady && (canDeposit || moneyOut) ? <div className="actions">
+        {canDeposit ? <ActionButton icon="arrowDown" label={t('home.deposit')} onClick={() => navigate('/deposit')} /> : null}
         {moneyOut ? <ActionButton icon="send" label={t('home.transfer')} onClick={() => navigate('/transfer')} /> : null}
         {moneyOut ? <ActionButton icon="arrowUpRight" label={t('home.withdraw')} onClick={() => navigate('/withdraw')} /> : null}
         <ActionButton icon="card" label={t('home.card')} onClick={() => navigate('/card')} />
@@ -62,16 +66,18 @@ export function Home() {
 
       <SectionTitle title={t('home.assets')} />
       <Surface flush>
-        {(wallet.data?.balances ?? []).map((b) => (
-          <button key={b.asset} className="list-item" onClick={() => navigate(`/deposit?asset=${b.asset}`)}>
+        {(wallet.data?.balances ?? []).map((b) => {
+          const content = <>
             <AssetIcon asset={b.asset} />
             <span className="stack-sm grow">
               <span className="body-medium">{b.asset}</span>
               <span className="caption muted">{b.asset === 'USDT' ? 'Tether' : 'USD Coin'}</span>
             </span>
             <span className="body-medium mono">{fmt.amount(b.amount, b.asset)}</span>
-          </button>
-        ))}
+          </>;
+          return canDeposit ? <button key={b.asset} className="list-item" onClick={() => navigate(`/deposit?asset=${b.asset}`)}>{content}</button>
+            : <div key={b.asset} className="list-item">{content}</div>;
+        })}
       </Surface>
 
       <SectionTitle

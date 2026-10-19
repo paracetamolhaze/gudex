@@ -53,6 +53,9 @@ export const users = pgTable(
     referredBy: uuid('referred_by').references((): AnyPgColumn => users.id),
     // Когда отправили напоминание «выпустите карту» — оно приходит один раз.
     cardReminderSentAt: timestamp('card_reminder_sent_at', { withTimezone: true }),
+    // Which Terms of Use / Privacy Policy version the client accepted, and when (proof of consent).
+    termsVersion: text('terms_version'),
+    termsAcceptedAt: timestamp('terms_accepted_at', { withTimezone: true }),
     createdAt: createdAt(),
     lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
   },

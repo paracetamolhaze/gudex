@@ -2,7 +2,7 @@ import { createHash, createHmac, randomBytes, scrypt as scryptCb, timingSafeEqua
 import { promisify } from 'node:util';
 import { and, eq, getTableColumns, isNull, sql } from 'drizzle-orm';
 import { jwtVerify, SignJWT } from 'jose';
-import type { BiometricTokenDto, ConfirmationDto, Locale, SessionDto } from '@gudex/shared';
+import { type BiometricTokenDto, type ConfirmationDto, type Locale, type SessionDto, TERMS_VERSION } from '@gudex/shared';
 import type { Config } from '../config';
 import type { Db, Tx } from '../db/client';
 import { biometricTokens, kycProfiles, users } from '../db/schema';
@@ -46,6 +46,12 @@ export class AuthService {
   ) {
     this.sessionKey = deriveSecret(config.appSecret, 'gudex:session');
     this.pepper = deriveSecret(config.appSecret, 'gudex:pin');
+  }
+
+  /** Documents and payments are taken only from a client who accepted the current Terms and Privacy Policy. */
+  async assertTermsAccepted(userId: string): Promise<void> {
+    const [user] = await this.db.select({ termsVersion: users.termsVersion }).from(users).where(eq(users.id, userId));
+    if (user?.termsVersion !== TERMS_VERSION) throw new AppError('validation', 'Accept the Terms of Use and the Privacy Policy first');
   }
 
   // ─── Вход ──────────────────────────────────────────────────────────────

@@ -2,7 +2,11 @@ import { useTranslation } from 'react-i18next';
 import { Button } from './ui';
 
 // Маскот GUDEX. Картинки с прозрачным фоном — public/mascot/.
-export type MascotPose = 'hello' | 'card' | 'pay' | 'success' | 'chill' | 'thinking' | 'sad' | 'travel';
+export type MascotPose = 'hello' | 'card' | 'pay' | 'success' | 'chill' | 'thinking' | 'sad';
+
+// Natural sizes of the 720px-tall pictures: the width is reserved before the image loads.
+const DIM: Record<MascotPose, [number, number]> = { hello: [550, 720], card: [532, 720], pay: [478, 720], success: [691, 720], chill: [569, 720],
+  thinking: [449, 720], sad: [490, 720] };
 
 // float — спокойно покачивается; pop — появляется с «пружинкой», потом покачивается; shake — мотает (ошибка).
 type Motion = 'float' | 'pop' | 'shake' | 'none';
@@ -14,7 +18,10 @@ export function Mascot({ pose, size = 200, motion = 'float' }: { pose: MascotPos
       <img
         key={`${pose}-${motion}`}
         className={`mascot ${motion}`}
-        src={pose === 'thinking' ? '/mascot/thinking-review-v2.png' : `/mascot/${pose}.webp`}
+        src={pose === 'thinking' ? '/mascot/thinking-v2.webp' : `/mascot/${pose}.webp`}
+        width={DIM[pose][0]}
+        height={DIM[pose][1]}
+        decoding="async"
         alt=""
         draggable={false}
         style={{ height: size }}

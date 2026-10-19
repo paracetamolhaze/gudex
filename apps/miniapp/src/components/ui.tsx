@@ -8,6 +8,7 @@ import { Icon, type IconName } from './Icon';
 // Экран внутреннего уровня: заголовок + системная кнопка «Назад» Telegram.
 // Вне Telegram (разработка в браузере) рисуем свою стрелку.
 export function Page({ title, children, tabbar }: { title?: string; children: ReactNode; tabbar?: boolean }) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const hasBack = !tabbar;
 
@@ -21,7 +22,7 @@ export function Page({ title, children, tabbar }: { title?: string; children: Re
       {title ? (
         <div className="row">
           {hasBack && !inTelegram ? (
-            <button className="link" onClick={() => navigate(-1)} aria-label="Back">
+            <button className="link" onClick={() => navigate(-1)} aria-label={t('common.back')}>
               <Icon name="arrowLeft" color="var(--text)" size={26} />
             </button>
           ) : null}
@@ -91,7 +92,7 @@ export function Surface({ children, flush, className }: { children: ReactNode; f
 export function Notice({ text, tone = 'info', icon, action }: { text: string; tone?: 'info' | 'warning' | 'danger'; icon?: IconName; action?: ReactNode }) {
   const color = { info: 'var(--primary)', warning: 'var(--warning)', danger: 'var(--danger)' }[tone];
   return (
-    <div className={`notice${tone === 'warning' ? ' warning' : ''}`}>
+    <div className={`notice${tone !== 'info' ? ` ${tone}` : ''}`}>
       <Icon name={icon ?? 'alert'} color={color} size={20} />
       <span className="grow">{text}</span>
       {action}

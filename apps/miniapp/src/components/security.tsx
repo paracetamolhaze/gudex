@@ -194,7 +194,7 @@ export function useConfirmation(): { confirm: (reason: string) => Promise<string
 
   const element = prompt ? (
     <div className="fullscreen">
-      <button className="link" style={{ alignSelf: 'flex-end' }} onClick={() => finish(null)} aria-label="Close">
+      <button className="link" style={{ alignSelf: 'flex-end' }} onClick={() => finish(null)} aria-label={t('common.cancel')}>
         <Icon name="close" color="var(--text)" size={26} />
       </button>
       <div className="grow" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

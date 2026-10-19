@@ -120,7 +120,7 @@ describe('card billing address before issuance', () => {
   it('preserves the single test-account sponsorship notice with a zero customer charge', () => {
     fixture.billing = { required: true, status: 'ready', address }; fixture.source = 'broker';
     const html = screen(CardIssue);
-    expect(html).toContain('Выпуск за счёт брокера — один раз для тестового аккаунта'); expect(html).toContain('0 USDT');
+    expect(html).toContain('Выпуск оплачен GUDEX'); expect(html).toContain('0 USDT');
     expect(html).not.toContain('Выпустить за 10');
   });
   it('keeps a provider without an address requirement usable', () => {
