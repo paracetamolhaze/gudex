@@ -102,6 +102,9 @@ const schema = z
     // mail Worker, which signs it with MAIL_INBOUND_SECRET and posts it to /v1/mail/inbound.
     MAIL_DOMAIN: z.string().trim().toLowerCase().regex(/^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/).optional(),
     MAIL_INBOUND_SECRET: optional(),
+    // Who may send codes: exact addresses or domains (a domain also covers its subdomains). UPay mails from noreply@upay.com.
+    MAIL_ALLOWED_SENDERS: z.string().optional().transform(value => (value || 'upay.com').split(',').map(item => item.trim().toLowerCase().replace(/^@/, '')).filter(Boolean))
+      .refine(items => items.length > 0 && items.every(item => /^([a-z0-9._%+-]+@)?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(item)), 'MAIL_ALLOWED_SENDERS: addresses or domains, comma-separated'),
     // Telegram ID через запятую: им доступны команды бота /notice (объявление о сбоях).
     ADMIN_TELEGRAM_IDS: optional(),
     MOCK_PARTNER_DELAY_MS: z.coerce.number().int().min(0).default(1500),

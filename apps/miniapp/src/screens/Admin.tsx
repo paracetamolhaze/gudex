@@ -6,9 +6,9 @@ import { useConfirmation } from '../components/security';
 import { Button, Field, Notice, Page, QueryError, Spinner, Surface } from '../components/ui';
 import { ApiError } from '../lib/api';
 import { CARD_TOPUP_ROUTES, type CardTopupAddresses } from '@gudex/shared';
-import { adminKeys, adminQueryValid, allowMailSender, assignWalletTransfer, canLinkManualCard, clientMailValid, documentObjectUrl, getAdminDocument, removeMailSender,
-  resolveAdminRequest, saveCardTopupAddresses, saveClientMail, updateAdminClient, useAdminAccess, useAdminApplications, useAdminClient, useAdminMail,
-  useAdminWalletTransfers, type AdminClient, type AdminDocument } from '../lib/admin';
+import { adminKeys, adminQueryValid, assignWalletTransfer, canLinkManualCard, clientMailValid, documentObjectUrl, getAdminDocument, resolveAdminRequest,
+  saveCardTopupAddresses, saveClientMail, updateAdminClient, useAdminAccess, useAdminApplications, useAdminClient, useAdminWalletTransfers,
+  type AdminClient, type AdminDocument } from '../lib/admin';
 import './Admin.css';
 
 const statuses: Record<string, string> = {
@@ -139,7 +139,7 @@ function ClientReview({ client, onUpdated }: { client: AdminClient; onUpdated: (
   const digits = cardNumber.replace(/\D/g, '');
   const expiryMatch = /^(\d{2})\/(\d{2})$/.exec(expiry);
   const mailValid = clientMailValid(mail, client.mail.domain);
-  const mailHint = client.mail.domain ? `Адрес на ${client.mail.domain}. Его же укажите клиенту в UPay: коды с этой почты придут клиенту в Telegram.`
+  const mailHint = client.mail.domain ? `Любое имя на @${client.mail.domain} — заранее создавать ничего не нужно. Этот же email укажите клиенту в UPay: коды 3DS придут ему в бота.`
     : 'Домен почты ещё не настроен: коды на эту почту клиенту не придут.';
   const cardReady = /^\d{13,19}$/.test(digits) && Boolean(expiryMatch) && /^\d{3,4}$/.test(cvv) && (!reviewing || identifierValid(customerNo)) && mailValid;
   const run = async (action: (token: string) => Promise<AdminClient>, prompt: string, completed: string, reset: () => void) => {
@@ -227,7 +227,7 @@ function ClientReview({ client, onUpdated }: { client: AdminClient; onUpdated: (
 
     {!canLink && (kyc || client.mail.address) ? <Surface className="stack">
       <h2 className="heading">Почта для кодов</h2>
-      <span className="caption muted">Письма UPay на эту почту бот пересылает клиенту в Telegram. Меняете здесь — поменяйте и в UPay.</span>
+      <span className="caption muted">Коды UPay с этой почты бот присылает клиенту в Telegram. Меняете здесь — поменяйте и в UPay.</span>
       <Field label="Почта" hint={mailHint} value={mail} type="email" maxLength={254} disabled={busy} autoComplete="off" spellCheck={false}
         error={mail && !mailValid ? 'Проверьте почту' : null} onChange={event => setMail(event.target.value.trim().toLowerCase())} />
       <Button title="Сохранить почту" disabled={busy || !mailValid || mail === client.mail.address}
@@ -332,74 +332,6 @@ function WalletTransfers() {
   </Surface>;
 }
 
-const mailStatuses: Record<string, [string, string]> = {
-  queued: ['В очереди', ''], delivered: ['Отправлено в Telegram', 'good'], unknown_sender: ['Отправитель не разрешён', 'attention'],
-  stale: ['Старое письмо', 'attention'], rate_limited: ['Слишком часто', 'attention'], expired: ['Код устарел', 'attention'], failed: ['Не доставлено', 'attention'],
-};
-
-// Client mail: who may send codes, and the latest letters (no letter text or codes are kept).
-function MailSettings() {
-  const queryClient = useQueryClient();
-  const mail = useAdminMail(true);
-  const confirmation = useConfirmation();
-  const [pattern, setPattern] = useState('');
-  const [label, setLabel] = useState('');
-  const [codePattern, setCodePattern] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const run = async (prompt: string, action: (token: string) => Promise<unknown>, reset: () => void) => {
-    setBusy(true); setError(null);
-    try {
-      const token = await confirmation.confirm(prompt);
-      if (!token) return;
-      queryClient.setQueryData([...adminKeys.all, 'mail'], await action(token));
-      reset();
-    } catch (cause) {
-      setError(cause instanceof ApiError && cause.status < 500 ? cause.message : 'Не удалось сохранить. Обновите и повторите.');
-    } finally { setBusy(false); }
-  };
-  const data = mail.data;
-  return <Surface className="stack">
-    <div className="row between"><h2 className="heading">Почта клиентов</h2>
-      <button className="link" disabled={mail.isFetching} onClick={() => void mail.refetch()}>Обновить</button></div>
-    {mail.isPending ? <Spinner /> : mail.isError ? <QueryError error={mail.error} onRetry={() => void mail.refetch()} /> : <>
-      {data!.configured ? <span className="caption muted">Домен: {data!.domain}. Коды разрешённых отправителей бот пересылает владельцу адреса.</span>
-        : <Notice tone="warning" text="Почта не настроена: на Vercel нужны MAIL_DOMAIN и MAIL_INBOUND_SECRET, в Cloudflare — Email Routing и Worker." />}
-      {error ? <Notice tone="danger" text={error} /> : null}
-      <h3 className="heading">Разрешённые отправители</h3>
-      {!data!.senders.length ? <p className="caption muted">Пока никого. Письма неразрешённых отправителей клиенту не пересылаются.</p> : null}
-      {data!.senders.map(item => <div className="admin-operation" key={item.pattern}>
-        <div className="row between"><strong>{item.label}</strong>
-          <Button small variant="secondary" title="Убрать" disabled={busy}
-            onClick={() => void run(`Убрать отправителя ${item.pattern}`, token => removeMailSender(item.pattern, token), () => {})} /></div>
-        <span className="caption muted">{item.pattern}{item.codePattern ? ` · шаблон: ${item.codePattern}` : ''}</span>
-      </div>)}
-      <Field label="Адрес или домен отправителя" placeholder="upay.com" value={pattern} maxLength={254} disabled={busy} autoComplete="off" spellCheck={false}
-        onChange={event => setPattern(event.target.value.trim().toLowerCase())} />
-      <Field label="Название в сообщении клиенту" placeholder="UPay" value={label} maxLength={40} disabled={busy} onChange={event => setLabel(event.target.value)} />
-      <Field label="Шаблон кода (необязательно)" hint="Регулярное выражение, код — в первой скобке. Пусто — бот находит код сам." value={codePattern}
-        maxLength={200} disabled={busy} autoComplete="off" spellCheck={false} onChange={event => setCodePattern(event.target.value)} />
-      <Button title="Разрешить отправителя" disabled={busy || pattern.length < 3 || !label.trim()}
-        onClick={() => void run(`Разрешить пересылать коды от ${pattern}`, token => allowMailSender({ pattern, label: label.trim(),
-          ...(codePattern.trim() ? { codePattern: codePattern.trim() } : {}) }, token), () => { setPattern(''); setLabel(''); setCodePattern(''); })} />
-      <h3 className="heading">Последние письма</h3>
-      {!data!.recent.length ? <p className="caption muted">Писем пока не было.</p> : null}
-      {data!.recent.map(item => {
-        const [name, tone] = mailStatuses[item.status] ?? [item.status, ''];
-        const domain = item.sender.slice(item.sender.lastIndexOf('@') + 1);
-        return <div className="admin-operation" key={item.id}>
-          <div className="row between"><strong>{item.sender}</strong><span className={`admin-status ${tone}`}>{name}</span></div>
-          <span className="caption muted">{date(item.createdAt)} · на {item.recipient}{item.hasCode ? ' · с кодом' : ''}</span>
-          {item.subject ? <span className="caption">{item.subject}</span> : null}
-          {item.error ? <span className="caption danger-text">{item.error}</span> : null}
-          {item.status === 'unknown_sender' ? <button className="link caption" disabled={busy} onClick={() => setPattern(domain)}>Подставить домен {domain}</button> : null}
-        </div>;
-      })}
-    </>}
-    {confirmation.element}
-  </Surface>;
-}
-
 export function Admin() {
   const navigate = useNavigate();
   const { query: selectedQuery } = useParams<{ query?: string }>();
@@ -433,7 +365,6 @@ export function Admin() {
         <button type="submit" className="btn primary">Найти</button>
       </form>
       <WalletTransfers />
-      <MailSettings />
       <div className="admin-grid">
         <Surface className="admin-queue stack">
           <div className="row between"><h2 className="heading">Очередь заявок</h2><button className="link" disabled={applications.isFetching} onClick={() => void applications.refetch()}>Обновить</button></div>

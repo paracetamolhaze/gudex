@@ -1,17 +1,18 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
-import { and, desc, eq, gte, inArray, isNotNull, lt, ne, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNotNull, lt, ne, sql } from 'drizzle-orm';
 import PostalMime from 'postal-mime';
 import type { Config } from '../config';
 import type { Db, DbOrTx } from '../db/client';
-import { adminAuditLog, inboundEmails, kycProfiles, mailAddresses, mailSenders, users } from '../db/schema';
+import { adminAuditLog, inboundEmails, kycProfiles, mailAddresses, users } from '../db/schema';
 import { AppError, isUniqueViolation } from '../lib/errors';
-import { extractCode } from '../mail/extract-code';
+import { codeContext, extractCode } from '../mail/extract-code';
 import { enqueue, PermanentJobError, RetryLater, type JobHandler } from '../queue/queue';
 import { type BotApi, TelegramApiError } from '../telegram/bot';
 
 // Client mail addresses on our domain. Cloudflare Email Routing hands every letter to the mail Worker,
-// which signs it and posts it here. A code from an allowed sender goes only to the Telegram chat of the
-// client who owns the address; the letter itself is never stored, the code is sealed and wiped once sent.
+// which signs it and posts it here. Only a one-time code from MAIL_ALLOWED_SENDERS (UPay) is forwarded,
+// and only to the Telegram chat of the client who owns the address; other letters are recorded and dropped.
+// The letter itself is never stored, the code is sealed and wiped once sent.
 
 export const MAX_RAW_BYTES = 1024 * 1024;
 const CODE_TTL_MS = 15 * 60_000;
@@ -35,6 +36,7 @@ export interface InboundLetter {
   date?: string;
 }
 export type InboundResult = { result: 'accepted' | 'duplicate' | 'reject' };
+type Otp = { code: string; threeDs: boolean; last4: string | null; minutes: number | null };
 
 /** Lowercase address, or null. With a domain, only addresses on that domain are accepted. */
 export function normalizeMailAddress(value: string, domain?: string): string | null {
@@ -64,7 +66,10 @@ export async function assignMailAddress(tx: DbOrTx, userId: string, address: str
   const [taken] = await tx.select({ userId: mailAddresses.userId }).from(mailAddresses).where(and(eq(mailAddresses.address, address), ne(mailAddresses.userId, userId)));
   if (taken) throw new AppError('validation', 'Эта почта уже привязана к другому клиенту');
   await tx.delete(mailAddresses).where(and(eq(mailAddresses.userId, userId), ne(mailAddresses.address, address)));
-  await tx.insert(mailAddresses).values({ address, userId }).onConflictDoUpdate({ target: mailAddresses.address, set: { updatedAt: new Date() } });
+  // Two operators saving one address at once: the later insert must fail, never take over the other client's row.
+  const kept = await tx.insert(mailAddresses).values({ address, userId }).onConflictDoUpdate({ target: mailAddresses.address, set: { updatedAt: new Date() },
+    setWhere: sql`${mailAddresses.userId} = excluded.user_id` }).returning({ address: mailAddresses.address });
+  if (!kept[0]) throw new AppError('validation', 'Эта почта уже привязана к другому клиенту');
   await tx.update(kycProfiles).set({ email: address, updatedAt: new Date() }).where(eq(kycProfiles.userId, userId));
 }
 
@@ -97,7 +102,6 @@ export async function clientMailAddress(db: DbOrTx, domain: string | undefined, 
 // Digits in a stored subject are hidden: a subject may itself carry the code.
 const maskSubject = (subject: string | undefined | null) => subject?.replace(/\s+/g, ' ').trim().slice(0, 200).replace(/\d{4,}/g, match => '•'.repeat(match.length)) || null;
 const escape = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-const senderOf = (address: string) => ({ address, domain: address.slice(address.lastIndexOf('@') + 1) });
 
 export class MailService {
   private readonly key: Buffer;
@@ -138,23 +142,27 @@ export class MailService {
       : `${sender}\n${letter.subject ?? ''}\n${letter.date ?? ''}\n${letter.rawSize}`)}`).digest('hex');
     const sentAt = (() => { const value = Date.parse(parsed?.date ?? letter.date ?? ''); return Number.isFinite(value) ? new Date(value) : null; })();
     const subject = parsed?.subject ?? letter.subject;
-    const rule = await this.senderRule(sender);
 
     const id = randomUUID();
-    let status: 'queued' | 'unknown_sender' | 'stale' | 'rate_limited' = 'queued';
-    let code: string | null = null;
-    if (!rule) status = 'unknown_sender';
+    let status: 'queued' | 'no_code' | 'unknown_sender' | 'stale' | 'rate_limited' = 'queued';
+    let otp: Otp | null = null;
+    if (!this.allowed(sender)) status = 'unknown_sender';
     else if (sentAt && now.getTime() - sentAt.getTime() > MAX_LETTER_AGE_MS) status = 'stale';
-    else code = parsed ? extractCode({ subject, text: parsed.text, html: parsed.html, codePattern: rule.codePattern }) : null;
+    else {
+      const letterText = { subject, text: parsed?.text, html: parsed?.html };
+      const code = parsed ? extractCode(letterText) : null;
+      if (code) otp = { code, ...codeContext(letterText) };
+      else status = 'no_code';
+    }
 
     return this.db.transaction(async tx => {
       if (status === 'queued') {
         const [recent] = await tx.select({ value: sql<number>`count(*)::int` }).from(inboundEmails).where(and(eq(inboundEmails.userId, owner.userId),
           inArray(inboundEmails.status, ['queued', 'delivered']), gte(inboundEmails.createdAt, new Date(now.getTime() - RATE_WINDOW_MS))));
-        if ((recent?.value ?? 0) >= RATE_LIMIT) { status = 'rate_limited'; code = null; }
+        if ((recent?.value ?? 0) >= RATE_LIMIT) { status = 'rate_limited'; otp = null; }
       }
       const inserted = await tx.insert(inboundEmails).values({ id, dedupeKey, recipient, userId: owner.userId, sender, subject: maskSubject(subject), sentAt, status,
-        hasCode: code !== null, ...(code ? { ...this.seal(id, code), codeExpiresAt: new Date(now.getTime() + CODE_TTL_MS) } : {}), createdAt: now })
+        hasCode: otp !== null, ...(otp ? { ...this.seal(id, JSON.stringify(otp)), codeExpiresAt: this.expiry(otp, sentAt, now) } : {}), createdAt: now })
         .onConflictDoNothing({ target: inboundEmails.dedupeKey }).returning({ id: inboundEmails.id });
       if (!inserted[0]) return { result: 'duplicate' as const };
       if (status === 'queued') await enqueue(tx, 'mail.notify', { id }, { dedupeKey: `mail.notify:${id}`, maxAttempts: 6 });
@@ -162,30 +170,37 @@ export class MailService {
     });
   }
 
-  private async senderRule(sender: string) {
-    if (!sender.includes('@')) return null;
-    const { address, domain } = senderOf(sender);
-    // An exact address, its domain, or a parent domain (mail.upay.com matches upay.com).
-    const labels = domain.split('.');
-    const candidates = [address, ...labels.slice(0, -1).map((_, index) => labels.slice(index).join('.'))];
-    const rows = await this.db.select().from(mailSenders).where(inArray(mailSenders.pattern, candidates));
-    return candidates.map(candidate => rows.find(row => row.pattern === candidate)).find(Boolean) ?? null;
+  // The letter's own lifetime ("expire in 2 minutes", counted from its Date, plus a minute for clock skew) caps ours:
+  // a code delayed by a retry is marked expired instead of being sent as still valid.
+  private expiry(otp: Otp, sentAt: Date | null, now: Date): Date {
+    const own = otp.minutes ? Math.min(sentAt?.getTime() ?? now.getTime(), now.getTime()) + (otp.minutes + 1) * 60_000 : Infinity;
+    return new Date(Math.min(now.getTime() + CODE_TTL_MS, own));
   }
 
-  private seal(id: string, code: string) {
+  // An exact address, its domain, or a parent domain (mail.upay.com matches upay.com).
+  private allowed(sender: string): boolean {
+    const at = sender.lastIndexOf('@');
+    if (at < 1) return false;
+    const labels = sender.slice(at + 1).split('.');
+    const candidates = [sender, ...labels.slice(0, -1).map((_, index) => labels.slice(index).join('.'))];
+    return candidates.some(candidate => this.config.MAIL_ALLOWED_SENDERS.includes(candidate));
+  }
+
+  private seal(id: string, value: string) {
     const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', this.key, iv);
     cipher.setAAD(Buffer.from(id));
-    const ciphertext = Buffer.concat([cipher.update(code, 'utf8'), cipher.final()]);
+    const ciphertext = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
     return { codeCiphertext: ciphertext.toString('base64'), codeIv: iv.toString('base64'), codeTag: cipher.getAuthTag().toString('base64') };
   }
 
-  private open(row: typeof inboundEmails.$inferSelect): string | null {
+  private open(row: typeof inboundEmails.$inferSelect): Otp | null {
     if (!row.codeCiphertext || !row.codeIv || !row.codeTag) return null;
     try {
       const cipher = createDecipheriv('aes-256-gcm', this.key, Buffer.from(row.codeIv, 'base64'));
       cipher.setAAD(Buffer.from(row.id));
       cipher.setAuthTag(Buffer.from(row.codeTag, 'base64'));
-      return Buffer.concat([cipher.update(Buffer.from(row.codeCiphertext, 'base64')), cipher.final()]).toString('utf8');
+      const otp = JSON.parse(Buffer.concat([cipher.update(Buffer.from(row.codeCiphertext, 'base64')), cipher.final()]).toString('utf8')) as Otp;
+      return typeof otp.code === 'string' && otp.code ? otp : null;
     } catch { return null; }
   }
 
@@ -207,19 +222,22 @@ export class MailService {
       const [row] = await tx.select().from(inboundEmails).where(eq(inboundEmails.id, id)).for('update');
       if (!row || row.status !== 'queued' || !row.userId) return;
       const wipe = { codeCiphertext: null, codeIv: null, codeTag: null };
-      if (row.hasCode && (!row.codeExpiresAt || row.codeExpiresAt <= now)) {
+      if (!row.hasCode) {
+        await tx.update(inboundEmails).set({ status: 'no_code', ...wipe }).where(eq(inboundEmails.id, id));
+        return;
+      }
+      if (!row.codeExpiresAt || row.codeExpiresAt <= now) {
         await tx.update(inboundEmails).set({ status: 'expired', ...wipe }).where(eq(inboundEmails.id, id));
         return;
       }
-      const code = row.hasCode ? this.open(row) : null;
-      if (row.hasCode && !code) {
+      const otp = this.open(row);
+      if (!otp) {
         await tx.update(inboundEmails).set({ status: 'failed', error: 'Sealed code cannot be read', ...wipe }).where(eq(inboundEmails.id, id));
         return;
       }
       const [user] = await tx.select({ telegramId: users.telegramId, locale: users.locale }).from(users).where(eq(users.id, row.userId));
       if (!user) throw new PermanentJobError('Recipient user is missing');
-      const label = (await this.senderRule(row.sender))?.label ?? row.sender;
-      try { await this.bot.sendMessage(user.telegramId, this.message(user.locale === 'en' ? 'en' : 'ru', row, label, code)); }
+      try { await this.bot.sendMessage(user.telegramId, this.message(user.locale === 'en' ? 'en' : 'ru', otp)); }
       catch (error) {
         if (error instanceof TelegramApiError && error.errorCode === 429) throw new RetryLater(Math.min(Math.max(error.retryAfter ?? 5, 1), 300));
         // The client blocked the bot or never opened it: repeating will not help.
@@ -235,66 +253,21 @@ export class MailService {
       .where(and(eq(inboundEmails.id, id), eq(inboundEmails.status, 'queued')));
   }
 
-  private message(locale: 'ru' | 'en', row: typeof inboundEmails.$inferSelect, label: string, code: string | null): string {
-    const at = row.sentAt ?? row.createdAt;
-    const time = `${at.toISOString().slice(11, 16)} UTC`;
-    if (code) {
-      return locale === 'en'
-        ? [`🔐 <b>Code from ${escape(label)}</b>: <code>${escape(code)}</code>`, `To ${escape(row.recipient)}, ${time}`, 'Never share this code with anyone.'].join('\n')
-        : [`🔐 <b>Код от ${escape(label)}</b>: <code>${escape(code)}</code>`, `Письмо на ${escape(row.recipient)}, ${time}`, 'Никому не сообщайте этот код.'].join('\n');
+  // Only the code and what helps to use it: «Код 3DS: 378346 · Карта •• 1175 · действует 2 мин.»
+  private message(locale: 'ru' | 'en', otp: Otp): string {
+    const code = `<code>${escape(otp.code)}</code>`;
+    if (locale === 'en') {
+      const details = [otp.last4 ? `Card •• ${otp.last4}` : null, otp.minutes ? `valid for ${otp.minutes} min` : null].filter(Boolean).join(' · ');
+      return [`🔐 <b>${otp.threeDs ? '3DS code' : 'Confirmation code'}</b>: ${code}`, ...(details ? [details] : []), 'Never share this code with anyone.'].join('\n');
     }
-    return locale === 'en'
-      ? [`✉️ <b>New letter from ${escape(label)}</b>`, ...(row.subject ? [`Subject: ${escape(row.subject)}`] : []), `To ${escape(row.recipient)}, ${time}`].join('\n')
-      : [`✉️ <b>Новое письмо от ${escape(label)}</b>`, ...(row.subject ? [`Тема: ${escape(row.subject)}`] : []), `На ${escape(row.recipient)}, ${time}`].join('\n');
+    const details = [otp.last4 ? `Карта •• ${otp.last4}` : null, otp.minutes ? `действует ${otp.minutes} мин.` : null].filter(Boolean).join(' · ');
+    return [`🔐 <b>${otp.threeDs ? 'Код 3DS' : 'Код подтверждения'}</b>: ${code}`, ...(details ? [details] : []), 'Никому не сообщайте этот код.'].join('\n');
   }
 
   private async cleanup(now = new Date()): Promise<void> {
     await this.db.update(inboundEmails).set({ codeCiphertext: null, codeIv: null, codeTag: null })
       .where(and(isNotNull(inboundEmails.codeCiphertext), lt(inboundEmails.codeExpiresAt, now)));
     await this.db.delete(inboundEmails).where(lt(inboundEmails.createdAt, new Date(now.getTime() - KEEP_DAYS * 86400_000)));
-  }
-
-  // ─── Administrator ────────────────────────────────────────────────────
-
-  async overview() {
-    const [senders, recent] = await Promise.all([
-      this.db.select({ pattern: mailSenders.pattern, label: mailSenders.label, codePattern: mailSenders.codePattern, createdAt: mailSenders.createdAt })
-        .from(mailSenders).orderBy(mailSenders.pattern),
-      this.db.select({ id: inboundEmails.id, recipient: inboundEmails.recipient, userId: inboundEmails.userId, sender: inboundEmails.sender,
-        subject: inboundEmails.subject, status: inboundEmails.status, hasCode: inboundEmails.hasCode, error: inboundEmails.error, createdAt: inboundEmails.createdAt,
-        deliveredAt: inboundEmails.deliveredAt }).from(inboundEmails).orderBy(desc(inboundEmails.createdAt)).limit(50),
-    ]);
-    return { domain: this.domain, configured: Boolean(this.domain && this.config.MAIL_INBOUND_SECRET),
-      senders: senders.map(row => ({ ...row, createdAt: row.createdAt.toISOString() })),
-      recent: recent.map(row => ({ ...row, createdAt: row.createdAt.toISOString(), deliveredAt: row.deliveredAt?.toISOString() ?? null })) };
-  }
-
-  async addSender(actor: string, input: { pattern: string; label: string; codePattern?: string }) {
-    const pattern = input.pattern.trim().toLowerCase().replace(/^@/, '');
-    if (!(pattern.includes('@') ? normalizeMailAddress(pattern) : HOST.test(pattern))) throw new AppError('validation', 'Укажите адрес (noreply@upay.com) или домен (upay.com)');
-    const label = input.label.trim();
-    if (!label || label.length > 40) throw new AppError('validation', 'Название — от 1 до 40 символов');
-    const codePattern = input.codePattern?.trim() || null;
-    if (codePattern) {
-      try { new RegExp(codePattern, 'iu'); } catch { throw new AppError('validation', 'Шаблон кода — неверное регулярное выражение'); }
-      if (codePattern.length > 200) throw new AppError('validation', 'Шаблон кода слишком длинный');
-    }
-    await this.db.transaction(async tx => {
-      await tx.insert(mailSenders).values({ pattern, label, codePattern, createdBy: actor })
-        .onConflictDoUpdate({ target: mailSenders.pattern, set: { label, codePattern } });
-      await tx.insert(adminAuditLog).values({ actorUserId: actor, targetUserId: actor, action: 'mail_sender_allow', reference: `${pattern}:${randomUUID()}`,
-        metadata: { pattern, label, codePattern } });
-    });
-    return this.overview();
-  }
-
-  async removeSender(actor: string, pattern: string) {
-    await this.db.transaction(async tx => {
-      const removed = await tx.delete(mailSenders).where(eq(mailSenders.pattern, pattern.trim().toLowerCase())).returning({ pattern: mailSenders.pattern });
-      if (!removed[0]) throw new AppError('not_found', 'Такого отправителя нет в списке');
-      await tx.insert(adminAuditLog).values({ actorUserId: actor, targetUserId: actor, action: 'mail_sender_remove', reference: `${removed[0].pattern}:${randomUUID()}` });
-    });
-    return this.overview();
   }
 
   async setClientAddress(actor: string, userId: string, value: string): Promise<void> {

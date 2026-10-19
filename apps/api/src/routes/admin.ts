@@ -78,9 +78,4 @@ export const adminRoutes = (services: Services): FastifyPluginAsync => async app
     await services.mail.setClientAddress(request.userId, userId, address);
     return services.manualAdmin.client(request.userId, userId);
   });
-  app.get('/mail', async () => services.mail.overview());
-  app.post('/mail/senders', async request => services.mail.addSender(request.userId, parse(z.object({
-    pattern: z.string().trim().min(3).max(254), label: z.string().trim().min(1).max(40), codePattern: z.string().max(200).optional() }).strict(), request.body)));
-  app.post('/mail/senders/remove', async request => services.mail.removeSender(request.userId,
-    parse(z.object({ pattern: z.string().trim().min(3).max(254) }).strict(), request.body).pattern));
 };

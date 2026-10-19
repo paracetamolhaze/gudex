@@ -3,14 +3,16 @@ import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { inboundEmails, users } from '../src/db/schema';
 import { TelegramApiError } from '../src/telegram/bot';
-import { api, createTestContext, registerUser, telegramLogin, TEST_PIN, type TestContext } from './helpers';
+import { api, createTestContext, registerUser, type TestContext } from './helpers';
 
 const SECRET = 'synthetic-mail-inbound-secret-0123456789';
 const DOMAIN = 'mail.gudex.test';
 let ctx: TestContext;
 let messageNo = 0;
 
-beforeEach(async () => { ctx = await createTestContext(undefined, { env: { MAIL_DOMAIN: DOMAIN, MAIL_INBOUND_SECRET: SECRET, CARD_REMINDER_MINUTES: '0' } }); });
+beforeEach(async () => {
+  ctx = await createTestContext(undefined, { env: { MAIL_DOMAIN: DOMAIN, MAIL_INBOUND_SECRET: SECRET, MAIL_ALLOWED_SENDERS: 'upay.test', CARD_REMINDER_MINUTES: '0' } });
+});
 afterEach(async () => { await ctx.close(); vi.restoreAllMocks(); });
 
 function mime(body: string, options: { from?: string; subject?: string; date?: Date; messageId?: string; to?: string } = {}) {
@@ -20,7 +22,7 @@ function mime(body: string, options: { from?: string; subject?: string; date?: D
 }
 
 async function deliver(raw: string, letter: { to?: string; from?: string } = {}, secret = SECRET) {
-  const payload = JSON.stringify({ from: letter.from ?? 'bounce@upay.test', to: letter.to ?? `c1@${DOMAIN}`, rawSize: raw.length,
+  const payload = JSON.stringify({ from: letter.from ?? 'bounce@amazonses.test', to: letter.to ?? `c1@${DOMAIN}`, rawSize: raw.length,
     raw: Buffer.from(raw).toString('base64') });
   const timestamp = String(Math.floor(Date.now() / 1000));
   const response = await ctx.app.inject({ method: 'POST', url: '/v1/mail/inbound', payload, headers: { 'content-type': 'application/json',
@@ -33,30 +35,31 @@ async function setup() {
   const client = await registerUser(ctx);
   const [owner] = await ctx.db.select().from(users).where(eq(users.telegramId, BigInt(client.telegramId)));
   await ctx.services.mail.setClientAddress(admin!.id, owner!.id, `c1@${DOMAIN}`);
-  await ctx.services.mail.addSender(admin!.id, { pattern: 'upay.test', label: 'UPay' });
   return { admin: admin!, owner: owner!, client };
 }
 
 const rows = () => ctx.db.select().from(inboundEmails);
+const codes = (telegramId: number) => ctx.bot.sent.filter(item => item.chatId === String(telegramId) && item.text.includes('<code>'));
 
 describe('client mail codes', () => {
-  it('sends an allowed code only to the owner, once, and keeps no readable code', async () => {
+  it('sends a UPay 3DS code only to the owner, once, and keeps no readable code', async () => {
     const { client } = await setup();
-    const raw = mime('Your verification code is 482913.');
+    const raw = mime(['3DS Verification', 'Your card number ends with 4466********1175. The binding process has been initiated.',
+      'Your OTP (one-time password) is as follows: 378346. This OTP will expire in 2 minutes.'].join('\r\n'), { subject: '3DS Verification' });
     expect(await deliver(raw)).toEqual({ status: 200, body: { result: 'accepted' } });
     const [queued] = await rows();
-    expect(JSON.stringify(queued)).not.toContain('482913');
+    expect(JSON.stringify(queued)).not.toContain('378346');
     const jobs = await ctx.db.execute(sql`select payload::text as payload from jobs`);
-    expect(JSON.stringify(jobs.rows)).not.toContain('482913');
+    expect(JSON.stringify(jobs.rows)).not.toContain('378346');
     await ctx.settle();
-    const codes = ctx.bot.sent.filter(item => item.text.includes('482913'));
-    expect(codes).toEqual([{ chatId: String(client.telegramId), text: expect.stringContaining('Код от UPay') }]);
+    expect(codes(client.telegramId)).toEqual([{ chatId: String(client.telegramId),
+      text: '🔐 <b>Код 3DS</b>: <code>378346</code>\nКарта •• 1175 · действует 2 мин.\nНикому не сообщайте этот код.' }]);
     expect((await rows())[0]).toMatchObject({ status: 'delivered', hasCode: true, codeCiphertext: null, codeIv: null, codeTag: null });
 
     // The Worker may post the same letter twice (direct post and its retry queue).
     expect(await deliver(raw)).toEqual({ status: 200, body: { result: 'duplicate' } });
     await ctx.settle();
-    expect(ctx.bot.sent.filter(item => item.text.includes('482913'))).toHaveLength(1);
+    expect(codes(client.telegramId)).toHaveLength(1);
   });
 
   it('bounces unknown recipients and refuses forged posts without storing anything', async () => {
@@ -67,24 +70,19 @@ describe('client mail codes', () => {
     expect(await rows()).toEqual([]);
   });
 
-  it('keeps letters from senders that are not allowed away from the client', async () => {
-    await setup();
-    const sent = ctx.bot.sent.length;
-    expect((await deliver(mime('Your code is 777888', { from: 'promo@shop.test', subject: 'Order 12345678 code 777888' }))).body.result).toBe('accepted');
-    await ctx.settle();
-    expect(ctx.bot.sent.length).toBe(sent);
-    const [row] = await rows();
-    expect(row).toMatchObject({ status: 'unknown_sender', sender: 'promo@shop.test', hasCode: false, subject: 'Order •••••••• code ••••••' });
-  });
-
-  it('tells the owner about a letter whose code is uncertain or whose MIME is broken, without guessing a code', async () => {
+  it('forwards nothing but codes from UPay', async () => {
     const { client } = await setup();
+    const sent = ctx.bot.sent.length;
+    await deliver(mime('Your code is 777888', { from: 'promo@shop.test', subject: 'Order 12345678 code 777888' }));
+    await deliver(mime('Welcome to UPay! Your account is ready.'));
     await deliver(mime('Your code 111111 or maybe 222222'));
     await deliver('\u0000\u0001 not a letter at all \r\n--', { from: 'noreply@upay.test' });
     await ctx.settle();
-    const notices = ctx.bot.sent.filter(item => item.chatId === String(client.telegramId) && item.text.includes('Новое письмо от UPay'));
-    expect(notices).toHaveLength(2);
-    expect(notices.map(item => item.text).join()).not.toMatch(/111111|222222/);
+    expect(ctx.bot.sent.length).toBe(sent);
+    expect(codes(client.telegramId)).toEqual([]);
+    const stored = await rows();
+    expect(stored.map(row => row.status).sort()).toEqual(['no_code', 'no_code', 'no_code', 'unknown_sender']);
+    expect(stored.find(row => row.status === 'unknown_sender')).toMatchObject({ sender: 'promo@shop.test', hasCode: false, subject: 'Order •••••••• code ••••••' });
   });
 
   it('skips stale letters, expired codes and floods', async () => {
@@ -95,12 +93,17 @@ describe('client mail codes', () => {
     await ctx.db.update(inboundEmails).set({ codeExpiresAt: new Date(Date.now() - 1000) }).where(eq(inboundEmails.status, 'queued'));
     await ctx.settle();
     expect((await rows()).find(row => row.status === 'expired')).toMatchObject({ codeCiphertext: null });
-    expect(ctx.bot.sent.some(item => /101010|202020/.test(item.text))).toBe(false);
+    // A code that lives 2 minutes, delivered 4 minutes after the letter was sent, is not sent as still valid.
+    await deliver(mime('Your OTP is 303030. This OTP will expire in 2 minutes.', { date: new Date(Date.now() - 4 * 60_000) }));
+    await ctx.settle();
+    expect((await rows()).filter(row => row.status === 'expired')).toHaveLength(2);
+    expect(ctx.bot.sent.some(item => /101010|202020|303030/.test(item.text))).toBe(false);
     for (let index = 0; index < 11; index++) await deliver(mime(`Your code is ${300000 + index}`));
     const statuses = (await rows()).map(row => row.status);
     expect(statuses.filter(status => status === 'rate_limited')).toHaveLength(1);
     await ctx.settle();
-    expect(ctx.bot.sent.filter(item => item.chatId === String(client.telegramId) && item.text.includes('Код от UPay'))).toHaveLength(10);
+    expect(codes(client.telegramId)).toHaveLength(10);
+    expect(codes(client.telegramId)[0]!.text).toContain('Код подтверждения');
   });
 
   it('retries while Telegram is unavailable and gives up when the client blocked the bot', async () => {
@@ -116,20 +119,15 @@ describe('client mail codes', () => {
     expect((await rows()).find(row => row.status === 'failed')).toMatchObject({ codeCiphertext: null, error: expect.stringContaining('blocked') });
   });
 
-  it('lets only administrators see letters or change mail settings, and never gives one address to two clients', async () => {
+  it('lets only administrators bind a mail address and never gives one address to two clients', async () => {
     const { admin, owner } = await setup();
     const outsider = await registerUser(ctx);
-    for (const [method, url] of [['GET', '/v1/admin/mail'], ['POST', '/v1/admin/mail/senders'], ['POST', `/v1/admin/clients/${owner.id}/mail`]] as const) {
-      const response = method === 'GET' ? await api(ctx, outsider.token).get(url) : await api(ctx, outsider.token).post(url, { pattern: 'evil.test', label: 'X', address: `x@${DOMAIN}` });
-      expect(response.status, url).toBe(403);
-    }
+    const response = await api(ctx, outsider.token).post(`/v1/admin/clients/${owner.id}/mail`, { address: `x@${DOMAIN}` });
+    expect(response.status).toBe(403);
     const [other] = await ctx.db.select().from(users).where(eq(users.telegramId, BigInt(outsider.telegramId)));
     await expect(ctx.services.mail.setClientAddress(admin.id, other!.id, `c1@${DOMAIN}`)).rejects.toMatchObject({ code: 'validation' });
     await expect(ctx.services.mail.setClientAddress(admin.id, other!.id, 'c2@other.test')).rejects.toMatchObject({ code: 'validation' });
-    const login = await telegramLogin(ctx, 999);
-    const adminToken = (await api(ctx, login.accessToken).post('/v1/security/pin', { pin: TEST_PIN })).body.accessToken as string;
-    const overview = await api(ctx, adminToken).get('/v1/admin/mail');
-    expect(overview.status).toBe(200);
-    expect(overview.body).toMatchObject({ domain: DOMAIN, configured: true, senders: [{ pattern: 'upay.test', label: 'UPay' }] });
+    await ctx.services.mail.setClientAddress(admin.id, other!.id, `any.name-2@${DOMAIN}`);
+    expect((await ctx.services.manualAdmin.client(admin.id, other!.id)).mail).toMatchObject({ address: `any.name-2@${DOMAIN}`, domain: DOMAIN });
   });
 });

@@ -5,7 +5,7 @@ import type { Config } from '../../src/config';
 import type { Db } from '../../src/db/client';
 import type { DbKycDocumentStore } from '../../src/kyc/document-store';
 import { AppError } from '../../src/lib/errors';
-import { extractCode, htmlToText } from '../../src/mail/extract-code';
+import { codeContext, extractCode, htmlToText } from '../../src/mail/extract-code';
 import { mailRoutes } from '../../src/routes/mail';
 import { KycService, type KycInput } from '../../src/services/kyc';
 import { MailService, normalizeMailAddress, suggestMailAddress } from '../../src/services/mail';
@@ -50,9 +50,12 @@ describe('confirmation code extraction', () => {
     expect(extractCode({ html })).toBe('841207');
   });
 
-  it('prefers the sender pattern and falls back when the pattern is invalid', () => {
-    expect(extractCode({ text: 'Use PIN-3344 to confirm the code request 556677', codePattern: 'PIN-(\\d{4})' })).toBe('3344');
-    expect(extractCode({ text: 'Your code is 556677', codePattern: '([' })).toBe('556677');
+  it('reads the UPay 3DS letter: the code, the card digits and how long it lives', () => {
+    const letter = { subject: '3DS Verification', html: '<h2>3DS Verification</h2><p>Your card number ends with 4466********1175. The binding process has been '
+      + 'initiated. Your OTP (one-time password) is as follows: 378346. This OTP will expire in 2 minutes.</p><p>Thank you for choosing UPay!</p>' };
+    expect(extractCode(letter)).toBe('378346');
+    expect(codeContext(letter)).toEqual({ threeDs: true, last4: '1175', minutes: 2 });
+    expect(codeContext({ text: 'Ваш код подтверждения 5521, действует 5 мин.' })).toEqual({ threeDs: false, last4: null, minutes: 5 });
   });
 
   it('finds a code in the subject and survives broken input', () => {

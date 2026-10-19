@@ -71,14 +71,6 @@ export interface AdminDocumentContent {
   expiresAt?: string;
 }
 
-export interface AdminMail {
-  domain: string | null;
-  configured: boolean;
-  senders: { pattern: string; label: string; codePattern: string | null; createdAt: string }[];
-  recent: { id: string; recipient: string; userId: string | null; sender: string; subject: string | null; status: string; hasCode: boolean;
-    error: string | null; createdAt: string; deliveredAt: string | null }[];
-}
-
 export interface AdminProviderCard {
   id: string;
   brokerCardId: string | null;
@@ -163,21 +155,6 @@ export function documentObjectUrl(content: AdminDocumentContent): string {
   const decoded = atob(content.base64);
   const bytes = Uint8Array.from(decoded, character => character.charCodeAt(0));
   return URL.createObjectURL(new Blob([bytes], { type: content.mimeType }));
-}
-
-export function useAdminMail(enabled: boolean) {
-  return useQuery({ queryKey: [...adminKeys.all, 'mail'],
-    queryFn: ({ signal }) => request<AdminMail>(`${PREFIX}/mail`, { cache: 'no-store', signal }),
-    enabled, retry: false, staleTime: 0, gcTime: 0, refetchOnWindowFocus: false });
-}
-
-export function allowMailSender(body: { pattern: string; label: string; codePattern?: string }, confirmationToken: string) {
-  return request<AdminMail>(`${PREFIX}/mail/senders`, { method: 'POST', body, cache: 'no-store', headers: { 'X-Confirmation-Token': confirmationToken } });
-}
-
-export function removeMailSender(pattern: string, confirmationToken: string) {
-  return request<AdminMail>(`${PREFIX}/mail/senders/remove`, { method: 'POST', body: { pattern }, cache: 'no-store',
-    headers: { 'X-Confirmation-Token': confirmationToken } });
 }
 
 export function saveClientMail(userId: string, address: string, confirmationToken: string) {

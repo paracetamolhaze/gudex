@@ -553,16 +553,6 @@ export const mailAddresses = pgTable('mail_addresses', {
   updatedAt: updatedAt(),
 }, t => [check('mail_addresses_address', sql`${t.address} = lower(${t.address}) and length(${t.address}) <= 254`)]);
 
-export const mailSenders = pgTable('mail_senders', {
-  pattern: text('pattern').primaryKey(),
-  label: text('label').notNull(),
-  codePattern: text('code_pattern'),
-  createdBy: uuid('created_by').references(() => users.id),
-  createdAt: createdAt(),
-}, t => [check('mail_senders_pattern', sql`${t.pattern} = lower(${t.pattern}) and length(${t.pattern}) <= 254`),
-  check('mail_senders_label', sql`length(${t.label}) between 1 and 40`),
-  check('mail_senders_code_pattern', sql`${t.codePattern} is null or length(${t.codePattern}) <= 200`)]);
-
 export const inboundEmails = pgTable('inbound_emails', {
   id: uuid('id').primaryKey().defaultRandom(),
   dedupeKey: text('dedupe_key').notNull().unique(),
@@ -583,7 +573,7 @@ export const inboundEmails = pgTable('inbound_emails', {
 }, t => [index('inbound_emails_user_idx').on(t.userId, t.createdAt), index('inbound_emails_created_idx').on(t.createdAt),
   index('inbound_emails_status_idx').on(t.status, t.createdAt),
   check('inbound_emails_subject_check', sql`${t.subject} is null or length(${t.subject}) <= 200`),
-  check('inbound_emails_status_check', sql`${t.status} in ('queued', 'delivered', 'unknown_sender', 'stale', 'rate_limited', 'expired', 'failed')`)]);
+  check('inbound_emails_status_check', sql`${t.status} in ('queued', 'delivered', 'no_code', 'unknown_sender', 'stale', 'rate_limited', 'expired', 'failed')`)]);
 
 export const adminAuditLog = pgTable('admin_audit_log', {
   id: uuid('id').primaryKey().defaultRandom(),
