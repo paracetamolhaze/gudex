@@ -98,6 +98,10 @@ const schema = z
     CHANNEL_USERNAME: optional(),
     // Напоминание новичку, который так и не выпустил карту: через сколько минут после регистрации. 0 — выключено.
     CARD_REMINDER_MINUTES: z.coerce.number().int().min(0).default(45),
+    // Client mail addresses for UPay codes: Cloudflare Email Routing (catch-all) hands every letter to the
+    // mail Worker, which signs it with MAIL_INBOUND_SECRET and posts it to /v1/mail/inbound.
+    MAIL_DOMAIN: z.string().trim().toLowerCase().regex(/^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/).optional(),
+    MAIL_INBOUND_SECRET: optional(),
     // Telegram ID через запятую: им доступны команды бота /notice (объявление о сбоях).
     ADMIN_TELEGRAM_IDS: optional(),
     MOCK_PARTNER_DELAY_MS: z.coerce.number().int().min(0).default(1500),
@@ -143,6 +147,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (adminTelegramIds.some(id => !/^[1-9]\d{0,18}$/.test(id) || BigInt(id) > 9223372036854775807n)) {
     throw new Error('ADMIN_TELEGRAM_IDS must contain numeric Telegram user IDs');
   }
+  if (parsed.MAIL_INBOUND_SECRET && parsed.MAIL_INBOUND_SECRET.length < 32) throw new Error('MAIL_INBOUND_SECRET must contain at least 32 characters');
   if (parsed.OPS_API_TOKEN && parsed.OPS_API_TOKEN.length < 32) throw new Error('OPS_API_TOKEN must contain at least 32 characters');
   if (parsed.CARD_PARTNER === 'upay' && parsed.DEV_TOOLS) throw new Error('Disable DEV_TOOLS before selecting the live UPay partner');
   if (parsed.CARD_PARTNER === 'upay' && !(parsed.UPAY_LOGIN && parsed.UPAY_PASSWORD && parsed.UPAY_TOTP_SECRET)) {

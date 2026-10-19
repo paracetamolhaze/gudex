@@ -67,7 +67,20 @@ export const adminRoutes = (services: Services): FastifyPluginAsync => async app
   app.post('/clients/:userId/card', async request => {
     const { userId } = parse(target, request.params);
     const input = parse(z.object({ operationId: z.uuid(), customerNo: providerId.optional(), cardNumber: z.string().trim().regex(/^[\d ]{13,23}$/),
-      expiryMonth: z.number().int().min(1).max(12), expiryYear: z.number().int().min(0).max(2100), cvv: z.string().regex(/^\d{3,4}$/) }).strict(), request.body);
+      expiryMonth: z.number().int().min(1).max(12), expiryYear: z.number().int().min(0).max(2100), cvv: z.string().regex(/^\d{3,4}$/),
+      email: z.string().trim().min(3).max(254) }).strict(), request.body);
     return services.manualAdmin.bindCard(request.userId, userId, input);
   });
+  // Client mail on our domain: UPay sends codes there, the bot forwards them to the client's Telegram.
+  app.post('/clients/:userId/mail', async request => {
+    const { userId } = parse(target, request.params);
+    const { address } = parse(z.object({ address: z.string().trim().min(3).max(254) }).strict(), request.body);
+    await services.mail.setClientAddress(request.userId, userId, address);
+    return services.manualAdmin.client(request.userId, userId);
+  });
+  app.get('/mail', async () => services.mail.overview());
+  app.post('/mail/senders', async request => services.mail.addSender(request.userId, parse(z.object({
+    pattern: z.string().trim().min(3).max(254), label: z.string().trim().min(1).max(40), codePattern: z.string().max(200).optional() }).strict(), request.body)));
+  app.post('/mail/senders/remove', async request => services.mail.removeSender(request.userId,
+    parse(z.object({ pattern: z.string().trim().min(3).max(254) }).strict(), request.body).pattern));
 };

@@ -1,0 +1,18 @@
+# Cloudflare Worker for client mail. Deploy from this folder: npx wrangler deploy
+# Secret (the same value as MAIL_INBOUND_SECRET on Vercel): npx wrangler secret put MAIL_INBOUND_SECRET
+name = "gudex-mail"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+[vars]
+API_URL = "https://gudex-seven.vercel.app/v1/mail/inbound"
+
+# Letters wait here while the API is unreachable (free plan keeps them 24 hours).
+[[queues.producers]]
+queue = "gudex-mail-retry"
+binding = "RETRY_QUEUE"
+
+[[queues.consumers]]
+queue = "gudex-mail-retry"
+max_batch_size = 5
+max_retries = 10

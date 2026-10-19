@@ -14,6 +14,13 @@ export interface BotApi {
   call(method: string, payload: object): Promise<unknown>;
 }
 
+// errorCode/retryAfter let a job tell "the user blocked the bot" from "try again in N seconds".
+export class TelegramApiError extends Error {
+  constructor(method: string, description: string, readonly errorCode: number, readonly retryAfter?: number) {
+    super(`Telegram ${method} failed: ${description}`);
+  }
+}
+
 export class TelegramBotApi implements BotApi {
   constructor(private readonly token: string) {}
 
@@ -23,8 +30,8 @@ export class TelegramBotApi implements BotApi {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    const body = (await res.json()) as { ok: boolean; result?: unknown; description?: string };
-    if (!body.ok) throw new Error(`Telegram ${method} failed: ${body.description ?? res.status}`);
+    const body = (await res.json()) as { ok: boolean; result?: unknown; description?: string; error_code?: number; parameters?: { retry_after?: number } };
+    if (!body.ok) throw new TelegramApiError(method, body.description ?? String(res.status), body.error_code ?? res.status, body.parameters?.retry_after);
     return body.result;
   }
 

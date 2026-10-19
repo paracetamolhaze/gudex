@@ -217,8 +217,6 @@ export const ru = {
     title: 'Верификация',
     firstName: 'Имя (латиницей)',
     lastName: 'Фамилия (латиницей)',
-    email: 'Email',
-    invalidEmail: 'Проверьте email',
     birthDate: 'Дата рождения',
     birthDatePlaceholder: 'ДД.ММ.ГГГГ',
     citizenship: 'Гражданство',

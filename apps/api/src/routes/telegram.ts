@@ -4,6 +4,7 @@ import { appSettings } from '../db/schema';
 import { enqueue } from '../queue/queue';
 import type { BotService } from '../telegram/bot-service';
 import type { FeePaymentService } from '../services/fee-payments';
+import type { MailService } from '../services/mail';
 import { requireOps } from './ops-auth';
 
 export const CRON_HEARTBEAT_KEY = 'cron_heartbeat';
@@ -28,7 +29,7 @@ export function cronReadiness(value: unknown, now = Date.now(), schedule = proce
 }
 
 export const telegramRoutes =
-  (deps: Deps, botService: BotService, feePayments?: FeePaymentService): FastifyPluginAsync =>
+  (deps: Deps, botService: BotService, feePayments?: FeePaymentService, mail?: MailService): FastifyPluginAsync =>
   async (app) => {
     // Вебхук бота. Telegram присылает секрет в заголовке — без него запрос игнорируем.
     app.post('/telegram/webhook', async (request, reply) => {
@@ -56,6 +57,8 @@ export const telegramRoutes =
           await enqueue(tx, 'deposit.invoices.sync_all', {}, { dedupeKey: 'deposit.invoices.sync_all', maxAttempts: 1 });
         }
         const tick = new Date();
+        // Expired codes and month-old letter records are removed once an hour.
+        if (tick.getUTCMinutes() === 0) await mail?.enqueueCleanup(tx);
         await tx.insert(appSettings).values({ key: CRON_HEARTBEAT_KEY, value: { lastTickAt: tick.toISOString() }, updatedAt: tick })
           .onConflictDoUpdate({ target: appSettings.key, set: { value: { lastTickAt: tick.toISOString() }, updatedAt: tick } });
       });

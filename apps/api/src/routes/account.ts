@@ -18,7 +18,8 @@ const latinName = z
 const kycBody = z.object({
   firstName: latinName,
   lastName: latinName,
-  email: z.email().max(254),
+  // Older Mini App builds still send the email the client typed; manual issuance ignores it.
+  email: z.email().max(254).optional(),
   birthDate: z.iso.date(),
   citizenship: z.string().regex(/^[A-Za-z]{2}$/),
   phone: z.string().regex(/^\d{7,15}$/).optional(),

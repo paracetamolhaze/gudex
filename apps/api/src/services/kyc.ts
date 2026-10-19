@@ -10,13 +10,16 @@ import { assertNewCustomerCanUseCard } from '../partner/upay/native-validation';
 import { enqueue, type JobContext, type JobHandler, RetryLater } from '../queue/queue';
 import { notify } from './notify';
 import { notifyAdmins } from './admin-notify';
+import { ensureMailAddress } from './mail';
 
+// The client no longer types an email: with manual issuance the operator assigns one on our domain when
+// linking the card; automatic verification gets the client's address on MAIL_DOMAIN.
 export interface KycInput {
-  firstName: string; lastName: string; email: string; birthDate: string; citizenship: string;
+  firstName: string; lastName: string; email?: string; birthDate: string; citizenship: string;
   phone?: string; globalCode?: string; documentType?: KycDocumentKind; documentCountry?: string; documentIds?: KycDocumentIds;
 }
 export type KycBillingAddress = NonNullable<typeof kycProfiles.$inferSelect['billingAddress']>;
-export interface KycOptions { live: boolean; enabled: boolean; requireSelfie: boolean; manual?: boolean; adminTelegramIds?: string[]; }
+export interface KycOptions { live: boolean; enabled: boolean; requireSelfie: boolean; manual?: boolean; adminTelegramIds?: string[]; mailDomain?: string; }
 
 async function jobStillActive(context?: JobContext): Promise<boolean> {
   if (!context) return true;
@@ -99,7 +102,10 @@ export class KycService {
       }
       if (input.documentType === 'driving_license' && !this.options.manual) throw new AppError('validation', 'A driving licence is accepted only with manual issuance');
       if (input.documentType !== 'passport' && !input.documentIds.back) throw new AppError('validation', 'The back of the document is required');
-      try { assertNewCustomerCanUseCard({ firstName: input.firstName.trim(), lastName: input.lastName.trim(), email: input.email.trim(),
+      // Only the name and phone rules matter here when the email is ours (assigned later or on MAIL_DOMAIN).
+      const email = this.options.manual ? 'client@example.com' : input.email?.trim() || (this.options.mailDomain ? `client@${this.options.mailDomain}` : null);
+      if (!email) throw new AppError('validation', 'Email is required: set MAIL_DOMAIN for automatic verification');
+      try { assertNewCustomerCanUseCard({ firstName: input.firstName.trim(), lastName: input.lastName.trim(), email,
         kyc: { phone: input.phone, globalCode: input.globalCode } }); }
       catch (error) {
         if (error instanceof PartnerError) throw new AppError('validation', error.message);
@@ -121,10 +127,12 @@ export class KycService {
       for (const [kind, id] of Object.entries(input.documentIds!)) await this.documents!.getOwned(userId, id, kind as 'front' | 'back' | 'selfie', tx);
     }
     const submissionId = randomUUID();
+    const email = this.options.manual ? row?.email ?? null
+      : input.email?.trim().toLowerCase() || (this.options.mailDomain ? await ensureMailAddress(tx, userId, this.options.mailDomain) : null);
     const values = {
       status: 'pending' as const, partnerProvider: this.provider, partnerCustomerId: sameProvider ? row?.partnerCustomerId ?? null : null,
       firstName: input.firstName.trim().toUpperCase(), lastName: input.lastName.trim().toUpperCase(),
-      email: input.email.trim().toLowerCase(), birthDate: input.birthDate, citizenship: input.citizenship.toUpperCase(),
+      email, birthDate: input.birthDate, citizenship: input.citizenship.toUpperCase(),
       phone: input.phone ?? null, globalCode: input.globalCode ?? null, documentType: input.documentType ?? null,
       documentCountry: input.documentCountry?.toUpperCase() ?? null, documentIds: input.documentIds ?? null, billingAddress,
       submissionId, submissionState: this.options.manual ? 'manual_review' : 'queued', documentsSubmittedAt: null, rejectionReason: null, submittedAt: new Date(), updatedAt: new Date(),

@@ -8,7 +8,6 @@ export type KycImageError = 'fileType' | 'fileSize' | 'fileContent';
 export interface KycSubmission {
   firstName: string;
   lastName: string;
-  email: string;
   birthDate: string;
   citizenship: string;
   phone?: string;
@@ -22,12 +21,11 @@ export interface KycSubmission {
 export const KYC_UPLOAD_MAX_BYTES = 2 * 1024 * 1024;
 export type KycUploadCache = Map<KycDocumentKind, { file: File; clientDocumentId: string; document?: KycDocumentDto }>;
 
-export function kycApplicantValidity(value: Pick<KycSubmission, 'firstName' | 'lastName' | 'email' | 'phone' | 'globalCode'>, live: boolean) {
+export function kycApplicantValidity(value: Pick<KycSubmission, 'firstName' | 'lastName' | 'phone' | 'globalCode'>, live: boolean) {
   const name = live ? /^[A-Za-z][A-Za-z ]{0,48}$/ : /^[A-Za-z][A-Za-z '-]{0,48}$/;
-  const email = live ? /^(?!\.)(?!.*\.\.)[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/ : /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   const phone = value.phone ?? '';
   const dial = value.globalCode ?? '';
-  return { first: name.test(value.firstName.trim()), last: name.test(value.lastName.trim()), email: email.test(value.email.trim()),
+  return { first: name.test(value.firstName.trim()), last: name.test(value.lastName.trim()),
     phone: /^\+\d{1,4}$/.test(dial) && /^\d{7,13}$/.test(phone) && dial.length - 1 + phone.length <= 15 &&
       (dial !== '+86' || /^1[3-9][0-9]{9}$/.test(phone)) };
 }
@@ -93,7 +91,7 @@ async function uploadKycDocuments({ documents, ...body }: KycSubmission, uploads
   if (!isKycBirthDateEligible(body.birthDate)) throw new ApiError('validation', 'Verification requires an eligible date of birth', 400);
   const live = body.phone !== undefined || body.globalCode !== undefined;
   const valid = kycApplicantValidity(body, live);
-  if (!valid.first || !valid.last || !valid.email || (live && !valid.phone)) throw new ApiError('validation', 'Check applicant contact details', 400);
+  if (!valid.first || !valid.last || (live && !valid.phone)) throw new ApiError('validation', 'Check applicant contact details', 400);
   // Validate every selected file before the first upload; the API validates them again.
   for (const kind of kinds) {
     const file = documents?.[kind];

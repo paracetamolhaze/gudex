@@ -543,6 +543,48 @@ export const adminNotifications = pgTable('admin_notifications', {
 }, t => [uniqueIndex('admin_notifications_event_recipient').on(t.eventKey, t.recipientTelegramId),
   check('admin_notifications_stage', sql`${t.stage} in ('verification', 'issuance', 'card_request')`)]);
 
+// ─── Почта клиентов для кодов UPay ───────────────────────────────────────
+// Адрес на нашем домене привязан к одному клиенту; письма приходят через Cloudflare Email Routing.
+
+export const mailAddresses = pgTable('mail_addresses', {
+  address: text('address').primaryKey(),
+  userId: uuid('user_id').notNull().unique().references(() => users.id),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, t => [check('mail_addresses_address', sql`${t.address} = lower(${t.address}) and length(${t.address}) <= 254`)]);
+
+export const mailSenders = pgTable('mail_senders', {
+  pattern: text('pattern').primaryKey(),
+  label: text('label').notNull(),
+  codePattern: text('code_pattern'),
+  createdBy: uuid('created_by').references(() => users.id),
+  createdAt: createdAt(),
+}, t => [check('mail_senders_pattern', sql`${t.pattern} = lower(${t.pattern}) and length(${t.pattern}) <= 254`),
+  check('mail_senders_label', sql`length(${t.label}) between 1 and 40`),
+  check('mail_senders_code_pattern', sql`${t.codePattern} is null or length(${t.codePattern}) <= 200`)]);
+
+export const inboundEmails = pgTable('inbound_emails', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  dedupeKey: text('dedupe_key').notNull().unique(),
+  recipient: text('recipient').notNull(),
+  userId: uuid('user_id').references(() => users.id),
+  sender: text('sender').notNull(),
+  subject: text('subject'),
+  sentAt: timestamp('sent_at', { withTimezone: true }),
+  status: text('status').notNull(),
+  hasCode: boolean('has_code').notNull().default(false),
+  codeCiphertext: text('code_ciphertext'),
+  codeIv: text('code_iv'),
+  codeTag: text('code_tag'),
+  codeExpiresAt: timestamp('code_expires_at', { withTimezone: true }),
+  error: text('error'),
+  createdAt: createdAt(),
+  deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+}, t => [index('inbound_emails_user_idx').on(t.userId, t.createdAt), index('inbound_emails_created_idx').on(t.createdAt),
+  index('inbound_emails_status_idx').on(t.status, t.createdAt),
+  check('inbound_emails_subject_check', sql`${t.subject} is null or length(${t.subject}) <= 200`),
+  check('inbound_emails_status_check', sql`${t.status} in ('queued', 'delivered', 'unknown_sender', 'stale', 'rate_limited', 'expired', 'failed')`)]);
+
 export const adminAuditLog = pgTable('admin_audit_log', {
   id: uuid('id').primaryKey().defaultRandom(),
   actorUserId: uuid('actor_user_id').notNull().references(() => users.id),

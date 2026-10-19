@@ -219,8 +219,6 @@ export const en: Translations = {
     title: 'Verification',
     firstName: 'First name (Latin)',
     lastName: 'Last name (Latin)',
-    email: 'Email',
-    invalidEmail: 'Check the email',
     birthDate: 'Date of birth',
     birthDatePlaceholder: 'DD.MM.YYYY',
     citizenship: 'Citizenship',

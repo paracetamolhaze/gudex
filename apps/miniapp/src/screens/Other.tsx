@@ -352,7 +352,6 @@ function KycForm({ rejectionReason }: { rejectionReason: string | null }) {
   const idempotencyKey = useRef(crypto.randomUUID()).current;
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
-  const [email, setEmail] = useState('');
   const [birthDate, setBirthDate] = useState('');
   const [citizenship, setCitizenship] = useState<string | null>(null);
   const [globalCode, setGlobalCode] = useState('+7');
@@ -388,7 +387,7 @@ function KycForm({ rejectionReason }: { rejectionReason: string | null }) {
 
   const isoDate = parseDate(birthDate);
   const birthDateEligible = isoDate !== null && isKycBirthDateEligible(isoDate);
-  const ok = kycApplicantValidity({ firstName, lastName, email, phone, globalCode }, contactsRequired);
+  const ok = kycApplicantValidity({ firstName, lastName, phone, globalCode }, contactsRequired);
   const documentsValid = !rules.documentsRequired || (front !== null && (type === 'passport' || back !== null));
   // One country answers citizenship, the document's country and the address country.
   const billingInput = { countryId: citizenship ?? '', postalCode: billing.postalCode.trim(), address: billing.address.trim() };
@@ -405,7 +404,7 @@ function KycForm({ rejectionReason }: { rejectionReason: string | null }) {
   const feeWallet = application ? config.data.integration.feeWallet ?? null : null;
   const payFromBalance = application && quoteReady && (brokerFunded || funding.enough);
   const paymentReady = !application || payFromBalance || feeWallet !== null;
-  const valid = ok.first && ok.last && ok.email && birthDateEligible && citizenship !== null && (!contactsRequired || ok.phone) && documentsValid
+  const valid = ok.first && ok.last && birthDateEligible && citizenship !== null && (!contactsRequired || ok.phone) && documentsValid
     && (!rules.selfieRequired || selfie !== null) && billingValid;
   const error = application ? apply.error : submit.error;
   const fundsNotice = needsFunds ? <Notice tone="warning"
@@ -456,14 +455,6 @@ function KycForm({ rejectionReason }: { rejectionReason: string | null }) {
         autoCorrect="off"
         placeholder="IVANOV"
         error={touched && !ok.last ? t('kyc.invalidName') : null}
-      />
-      <Field
-        label={t('kyc.email')}
-        type="email"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        placeholder="you@example.com"
-        error={touched && !ok.email ? t('kyc.invalidEmail') : null}
       />
       {contactsRequired ? <div className="row" style={{ alignItems: 'flex-start' }}>
         <div style={{ width: 110 }}><Field label={t('kyc.globalCode')} value={globalCode} type="tel" inputMode="tel" autoComplete="tel-country-code"
@@ -522,7 +513,7 @@ function KycForm({ rejectionReason }: { rejectionReason: string | null }) {
           setTouched(true);
           if (!valid) return haptic.error();
           const kyc = {
-            firstName: firstName.trim(), lastName: lastName.trim(), email: email.trim(), birthDate: isoDate!, citizenship: citizenship!,
+            firstName: firstName.trim(), lastName: lastName.trim(), birthDate: isoDate!, citizenship: citizenship!,
             ...(contactsRequired ? { phone, globalCode } : {}),
             ...(rules.documentsRequired ? { documentType: type, documentCountry: citizenship! } : {}),
             ...(rules.documentsRequired || rules.selfieRequired ? { documents: { ...(front ? { front } : {}), ...(type !== 'passport' && back ? { back } : {}), ...(selfie ? { selfie } : {}) } } : {}),

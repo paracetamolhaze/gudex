@@ -13,11 +13,12 @@ import type { CardService } from './cards';
 import { notify } from './notify';
 import { CardBillingService } from './card-billing';
 import { CardRequisitesVault, luhnValid } from './card-requisites';
+import { assignMailAddress, checkMailAddress, clientMailAddress } from './mail';
 
 type Profile = typeof kycProfiles.$inferSelect;
 type ReadClient = Pick<UpayClient, 'readRequest' | 'loginInfo'>;
 type KycApproval = { submissionId: string; customerId: string; customerNo: string; documentsMatch: true };
-type CardBinding = { operationId: string; customerNo?: string; cardNumber: string; expiryMonth: number; expiryYear: number; cvv: string };
+type CardBinding = { operationId: string; customerNo?: string; cardNumber: string; expiryMonth: number; expiryYear: number; cvv: string; email: string };
 const validUuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 function conflict(message = 'The application changed; refresh it before continuing'): never { throw new AppError('validation', message); }
 const fingerprint = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -78,7 +79,8 @@ export class ManualAdminService {
       .then(address => address ? { ...address, countryName: null } : null);
     const clientCards = await this.db.select({ id: cards.id, status: cards.status, last4: cards.last4, topupAddresses: cards.topupAddresses }).from(cards)
       .where(and(eq(cards.userId, user.id), inArray(cards.status, ['pending', 'active', 'frozen']))).orderBy(desc(cards.createdAt));
-    return { userId: user.id, telegramId: String(user.telegramId), username: user.username, createdAt: user.createdAt.toISOString(), billingAddress,
+    const mail = await clientMailAddress(this.db, this.config.MAIL_DOMAIN, user.id);
+    return { userId: user.id, telegramId: String(user.telegramId), username: user.username, createdAt: user.createdAt.toISOString(), billingAddress, mail,
       cards: clientCards.map(card => ({ id: card.id, status: card.status, last4: card.last4, topupAddresses: (card.topupAddresses ?? {}) as CardTopupAddresses })),
       kyc: profile ? { status: profile.status, submissionState: profile.submissionState, submissionId: profile.submissionId, firstName: profile.firstName,
         lastName: profile.lastName, email: profile.email, phone: profile.phone, globalCode: profile.globalCode, birthDate: profile.birthDate,
@@ -112,7 +114,7 @@ export class ManualAdminService {
   private manualProfile(profile: Profile | undefined, submissionId: string): asserts profile is Profile {
     if (!profile || profile.submissionId !== submissionId || profile.partnerProvider !== 'upay' || profile.status !== 'pending' ||
       profile.submissionState !== 'manual_review' || profile.documentsSubmittedAt !== null) conflict();
-    if (!name(profile.firstName) || !name(profile.lastName) || !email(profile.email) || !['id_card', 'passport', 'driving_license'].includes(profile.documentType ?? '')) conflict('Complete identity details are required');
+    if (!name(profile.firstName) || !name(profile.lastName) || !['id_card', 'passport', 'driving_license'].includes(profile.documentType ?? '')) conflict('Complete identity details are required');
   }
 
   private async currentDocuments(profile: Profile, db: DbOrTx) {
@@ -153,7 +155,7 @@ export class ManualAdminService {
     const customerId = identifier(customer.customerId ?? customer.id), customerNo = identifier(customer.no ?? customer.customerNo);
     if (customerId !== input.customerId || customerNo !== input.customerNo ||
       customer.id !== undefined && identifier(customer.id) !== input.customerId || customer.customerNo !== undefined && identifier(customer.customerNo) !== input.customerNo ||
-      name(customer.givenName) !== name(before.firstName) || name(customer.lastName) !== name(before.lastName) || email(customer.email) !== email(before.email) ||
+      name(customer.givenName) !== name(before.firstName) || name(customer.lastName) !== name(before.lastName) || before.email !== null && email(customer.email) !== email(before.email) ||
       contact(customer.phone) !== contact(before.phone) || contact(customer.globalCode) !== contact(before.globalCode)) conflict('The provider customer does not match this client identity');
     const info = object(await read.read('GET', '/kyc/info', { query: { customerNo: input.customerNo } }), 'customer verification');
     const documentType = before.documentType === 'id_card' ? 1 : 2;
@@ -292,6 +294,8 @@ export class ManualAdminService {
     if (!Number.isInteger(input.expiryMonth) || input.expiryMonth < 1 || input.expiryMonth > 12 || !Number.isInteger(year)
       || year > now.getUTCFullYear() + 15 || year * 12 + input.expiryMonth < now.getUTCFullYear() * 12 + now.getUTCMonth() + 1) conflict('Проверьте срок действия карты');
     if (input.customerNo !== undefined && !identifier(input.customerNo)) conflict('Проверьте Customer No клиента в UPay');
+    // The email the operator gave this client in UPay: codes sent there reach the client's Telegram.
+    const mailAddress = await checkMailAddress(this.db, this.config.MAIL_DOMAIN, userId, input.email);
     const [profile] = await this.db.select().from(kycProfiles).where(eq(kycProfiles.userId, userId));
     const [operation] = await this.db.select().from(cardOperations).where(and(eq(cardOperations.id, input.operationId), eq(cardOperations.userId, userId)));
     if (!operation || operation.type !== 'issue' || operation.fulfillmentMode !== 'manual' || operation.status !== 'pending' || operation.partnerProvider !== 'upay'
@@ -345,6 +349,7 @@ export class ManualAdminService {
           documentsSubmittedAt: now, reviewedAt: now, rejectionReason: null, updatedAt: now }).where(eq(kycProfiles.userId, userId));
         await this.documents.removeOwned(userId, Object.values(current.documentIds ?? {}), tx);
       }
+      await assignMailAddress(tx, userId, mailAddress);
       await tx.update(cards).set({ ...vault.seal(userId, operation!.cardId, { pan, cvv: input.cvv }),
         ...(balance !== null ? { partnerBalance: balance, partnerBalanceAt: now } : {}) }).where(eq(cards.id, operation!.cardId));
     };

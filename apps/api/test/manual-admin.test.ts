@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../src/config';
-import { adminAuditLog, cardOperations, cards, jobs, kycDocuments, kycProfiles, ledgerEntries, users } from '../src/db/schema';
+import { adminAuditLog, cardOperations, cards, jobs, kycDocuments, kycProfiles, ledgerEntries, mailAddresses, users } from '../src/db/schema';
 import { DbKycDocumentStore } from '../src/kyc/document-store';
 import type { UpayClient } from '../src/partner/upay/client';
 import type { Tx } from '../src/db/client';
@@ -14,7 +14,7 @@ import { api, createTestContext, registerUser, telegramLogin, TEST_BOT_TOKEN, TE
 let ctx: TestContext;
 const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString('base64');
 const productId = '2040769880440840193';
-const typed = { cardNumber: '4242 4242 4242 4242', expiryMonth: 12, expiryYear: 30, cvv: '123' };
+const typed = { cardNumber: '4242 4242 4242 4242', expiryMonth: 12, expiryYear: 30, cvv: '123', email: 'c7k3m9q2@mail.gudex.test' };
 const env = { CARD_ISSUANCE_MODE: 'manual', ADMIN_TELEGRAM_IDS: '999', CARD_REMINDER_MINUTES: '0' };
 const config = () => loadConfig({ ...process.env, ...env, TELEGRAM_BOT_TOKEN: TEST_BOT_TOKEN, CARD_PARTNER: 'upay',
   UPAY_LOGIN: 'synthetic-login', UPAY_PASSWORD: 'synthetic-password', UPAY_TOTP_SECRET: 'JBSWY3DPEHPK3PXP', DEV_TOOLS: 'false' });
@@ -216,6 +216,19 @@ describe('manual card proof', () => {
     expect(new CardRequisitesVault(config().appSecret).open(f.user.id, op.cardId, card!)).toEqual({ pan: '4242424242424242', cvv: '123' });
     expect(card!.partnerBalance).toBe(2550n);
     expect(() => new CardRequisitesVault(config().appSecret).open(f.foreign.id, op.cardId, card!)).toThrow();
+    // The email the operator typed becomes the client's mail address and the questionnaire email.
+    expect(await ctx.db.select({ address: mailAddresses.address, userId: mailAddresses.userId }).from(mailAddresses))
+      .toEqual([{ address: 'c7k3m9q2@mail.gudex.test', userId: f.user.id }]);
+    expect((await ctx.db.select().from(kycProfiles).where(eq(kycProfiles.userId, f.user.id)))[0]!.email).toBe('c7k3m9q2@mail.gudex.test');
+  });
+
+  it('refuses an email that already belongs to another client', async () => {
+    const f = await fixture();
+    const op = await f.operation();
+    await ctx.db.insert(mailAddresses).values({ address: 'c7k3m9q2@mail.gudex.test', userId: f.foreign.id });
+    await expect(f.service.bindCard(f.admin.id, f.user.id, { operationId: op.id, ...typed })).rejects.toMatchObject({ code: 'validation' });
+    await expect(f.service.bindCard(f.admin.id, f.user.id, { operationId: op.id, ...typed, email: 'not-an-email' })).rejects.toMatchObject({ code: 'validation' });
+    expect(f.complete).not.toHaveBeenCalled();
   });
 
   it.each([

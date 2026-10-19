@@ -18,6 +18,7 @@ import { devRoutes } from './routes/dev';
 import { moneyRoutes } from './routes/money';
 import { opsRoutes } from './routes/ops';
 import { adminRoutes } from './routes/admin';
+import { mailRoutes } from './routes/mail';
 import { telegramRoutes } from './routes/telegram';
 import { ActivityService } from './services/activity';
 import { AuthService } from './services/auth';
@@ -31,6 +32,7 @@ import { AdminNotificationService } from './services/admin-notify';
 import { ManualAdminService } from './services/manual-admin';
 import { CardApplicationService } from './services/card-application';
 import { FeePaymentService } from './services/fee-payments';
+import { MailService } from './services/mail';
 import { ReferralService } from './services/referrals';
 import { TransferService } from './services/transfers';
 import { WalletService } from './services/wallet';
@@ -76,6 +78,7 @@ export interface Services {
   manualAdmin: ManualAdminService;
   cardApplications: CardApplicationService;
   feePayments: FeePaymentService;
+  mail: MailService;
   bot: BotService;
 }
 
@@ -88,11 +91,12 @@ export function createServices(deps: Deps): Services {
   const kyc = new KycService(db, partner, config.KYC_POLL_SECONDS, new DbKycDocumentStore(db, config.appSecret, config.KYC_DOCUMENT_TTL_SECONDS), {
     live: config.CARD_PARTNER === 'upay', enabled: config.CARD_PARTNER !== 'upay' || config.UPAY_KYC_ENABLED,
     requireSelfie: config.UPAY_KYC_REQUIRE_SELFIE,
-    manual: config.CARD_ISSUANCE_MODE === 'manual', adminTelegramIds: config.adminTelegramIds,
+    manual: config.CARD_ISSUANCE_MODE === 'manual', adminTelegramIds: config.adminTelegramIds, mailDomain: config.MAIL_DOMAIN,
   });
   const cardBilling = deps.cardBilling ?? new CardBillingService(db, config, deps.upay);
   const cardApplications = new CardApplicationService(db, config, kyc, cards, cardBilling);
   const feePayments = new FeePaymentService(db, config, deps.chainFetch);
+  const mail = new MailService(db, config, deps.bot);
   // A payment to the app wallet moves a waiting application to the operator by itself.
   feePayments.setCreditedHook((tx, input) => cardApplications.afterFeeCredited(tx, input));
   return {
@@ -116,6 +120,7 @@ export function createServices(deps: Deps): Services {
     manualAdmin: new ManualAdminService(db, config, deps.upay, cards),
     cardApplications,
     feePayments,
+    mail,
     bot: new BotService(deps.bot, config, auth, notices),
   };
 }
@@ -129,6 +134,7 @@ export function jobHandlers(services: Services): Record<string, JobHandler> {
     ...services.notifications.handlers(),
     ...services.adminNotifications.handlers(),
     ...services.feePayments.handlers(),
+    ...services.mail.handlers(),
   };
 }
 
@@ -247,9 +253,10 @@ export async function buildApp(deps: Deps, services: Services, options: BuildOpt
   await app.register(cardRoutes(services), { prefix: '/v1' });
   await app.register(cardBillingRoutes(services), { prefix: '/v1' });
   await app.register(moneyRoutes(deps, services), { prefix: '/v1' });
-  await app.register(telegramRoutes(deps, services.bot, services.feePayments), { prefix: '/v1' });
+  await app.register(telegramRoutes(deps, services.bot, services.feePayments, services.mail), { prefix: '/v1' });
   await app.register(opsRoutes(deps, services, options.drainJobs), { prefix: '/v1/ops' });
   await app.register(adminRoutes(services), { prefix: '/v1/admin' });
+  await app.register(mailRoutes(services), { prefix: '/v1/mail' });
   if (deps.config.DEV_TOOLS) await app.register(devRoutes(deps, services), { prefix: '/v1/dev' });
 
   return app;

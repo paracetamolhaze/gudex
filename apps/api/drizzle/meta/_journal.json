@@ -39,6 +39,7 @@
     {"idx": 16, "version": "7", "when": 1792152000013, "tag": "0016_card_application_billing", "breakpoints": true},
     {"idx": 17, "version": "7", "when": 1792152000014, "tag": "0017_fee_wallet_payments", "breakpoints": true},
     {"idx": 18, "version": "7", "when": 1792152000015, "tag": "0018_fee_address_pool", "breakpoints": true},
-    {"idx": 19, "version": "7", "when": 1792152000016, "tag": "0019_card_topup_addresses", "breakpoints": true}
+    {"idx": 19, "version": "7", "when": 1792152000016, "tag": "0019_card_topup_addresses", "breakpoints": true},
+    {"idx": 20, "version": "7", "when": 1792152000017, "tag": "0020_mail_codes", "breakpoints": true}
   ]
 }

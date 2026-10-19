@@ -32,6 +32,8 @@ export interface AdminClient {
   username: string | null;
   createdAt: string;
   billingAddress: { countryId: string; countryName?: string | null; postalCode: string; address: string } | null;
+  /** The client's email on our domain (given to UPay); codes sent there reach the client's Telegram. */
+  mail: { address: string | null; suggested: string | null; domain: string | null };
   kyc: null | {
     status: string;
     submissionState: string;
@@ -67,6 +69,14 @@ export interface AdminDocumentContent {
   mimeType: AdminDocument['mimeType'];
   base64: string;
   expiresAt?: string;
+}
+
+export interface AdminMail {
+  domain: string | null;
+  configured: boolean;
+  senders: { pattern: string; label: string; codePattern: string | null; createdAt: string }[];
+  recent: { id: string; recipient: string; userId: string | null; sender: string; subject: string | null; status: string; hasCode: boolean;
+    error: string | null; createdAt: string; deliveredAt: string | null }[];
 }
 
 export interface AdminProviderCard {
@@ -153,4 +163,30 @@ export function documentObjectUrl(content: AdminDocumentContent): string {
   const decoded = atob(content.base64);
   const bytes = Uint8Array.from(decoded, character => character.charCodeAt(0));
   return URL.createObjectURL(new Blob([bytes], { type: content.mimeType }));
+}
+
+export function useAdminMail(enabled: boolean) {
+  return useQuery({ queryKey: [...adminKeys.all, 'mail'],
+    queryFn: ({ signal }) => request<AdminMail>(`${PREFIX}/mail`, { cache: 'no-store', signal }),
+    enabled, retry: false, staleTime: 0, gcTime: 0, refetchOnWindowFocus: false });
+}
+
+export function allowMailSender(body: { pattern: string; label: string; codePattern?: string }, confirmationToken: string) {
+  return request<AdminMail>(`${PREFIX}/mail/senders`, { method: 'POST', body, cache: 'no-store', headers: { 'X-Confirmation-Token': confirmationToken } });
+}
+
+export function removeMailSender(pattern: string, confirmationToken: string) {
+  return request<AdminMail>(`${PREFIX}/mail/senders/remove`, { method: 'POST', body: { pattern }, cache: 'no-store',
+    headers: { 'X-Confirmation-Token': confirmationToken } });
+}
+
+export function saveClientMail(userId: string, address: string, confirmationToken: string) {
+  return request<AdminClient>(`${PREFIX}/clients/${encodeURIComponent(userId)}/mail`, { method: 'POST', body: { address }, cache: 'no-store',
+    headers: { 'X-Confirmation-Token': confirmationToken } });
+}
+
+// Same rule as the API: Latin letters, digits, dot, - and _, on our domain when it is set.
+export function clientMailValid(value: string, domain: string | null): boolean {
+  const match = /^([a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?)@((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63})$/.exec(value.trim().toLowerCase());
+  return Boolean(match) && !match![1]!.includes('..') && (!domain || match![2] === domain);
 }

@@ -4,7 +4,8 @@ import { isKycBirthDateEligible, kycApplicantValidity, KYC_UPLOAD_MAX_BYTES, kyc
 const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
 const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const image = (bytes = jpeg, type = 'image/jpeg') => new File([bytes], 'verification-image', { type });
-const applicant = { firstName: 'IVAN', lastName: 'IVANOV', email: 'example@example.test', birthDate: '1990-01-01', citizenship: 'KZ' };
+// The client no longer types an email: the operator assigns one on our mail domain.
+const applicant = { firstName: 'IVAN', lastName: 'IVANOV', birthDate: '1990-01-01', citizenship: 'KZ' };
 const receipt = (body: { clientDocumentId: string; kind: string; mimeType: string }) => ({ id: body.clientDocumentId, kind: body.kind,
   mimeType: body.mimeType, size: 8, expiresAt: new Date(Date.now() + 3600_000).toISOString() });
 
@@ -43,7 +44,7 @@ describe('verification image validation', () => {
 describe('explicit verification submission', () => {
   it('uses the same live contact boundaries in the form and upload guard without rewriting identity', () => {
     const contact = { ...applicant, firstName: 'IVAN PETR', phone: '13912345678', globalCode: '+86' };
-    expect(kycApplicantValidity(contact, true)).toEqual({ first: true, last: true, email: true, phone: true });
+    expect(kycApplicantValidity(contact, true)).toEqual({ first: true, last: true, phone: true });
     expect(kycApplicantValidity({ ...contact, firstName: 'A'.repeat(49), phone: '1234567890123', globalCode: '+7' }, true).first).toBe(true);
     expect(kycApplicantValidity({ ...contact, phone: '1234567890123', globalCode: '+7' }, true).phone).toBe(true);
     expect(kycApplicantValidity({ ...contact, phone: '123456', globalCode: '+7' }, true).phone).toBe(false);
@@ -52,7 +53,6 @@ describe('explicit verification submission', () => {
   });
   it.each([
     { firstName: "O'NEIL" }, { lastName: 'IVAN-IVANOV' }, { firstName: 'A'.repeat(50) },
-    { email: '.ivan@example.test' }, { email: 'ivan..ivan@example.test' },
     { phone: '12345678901234' }, { globalCode: '+86', phone: '12345678901' },
   ])('rejects live contact details that cannot issue a card before uploading any photo', async invalid => {
     const fetch = vi.fn<typeof globalThis.fetch>(async (path, options) => Response.json(String(path).endsWith('/documents')
