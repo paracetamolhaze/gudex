@@ -496,7 +496,6 @@ export const en: Translations = {
     android4: 'Enter the number, expiry date and CVV — you can copy them below.',
     showDetails: 'Show card details',
     testCard: 'This is a test card: {{wallet}} will not accept it. Try it with a real UPay card.',
-    inAppNote: 'An «Add to {{wallet}}» button inside the app will appear once the card issuer supports it.',
   },
   errors: {
     validation: 'Please check the entered data',

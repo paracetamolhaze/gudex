@@ -559,7 +559,6 @@ export function WalletPay() {
       )}
       {config?.devTools ? <Notice tone="warning" icon="flask" text={t('walletPay.testCard', { wallet: walletName })} /> : null}
       {reveal.error ? <Notice tone="danger" text={fmt.error(reveal.error)} /> : null}
-      <Notice text={t('walletPay.inAppNote', { wallet: walletName })} />
       {reveal.element}
     </Page>
   );
