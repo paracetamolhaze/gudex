@@ -22,7 +22,9 @@
   --screen-h: var(--tg-viewport-stable-height, 100dvh);
   --key: clamp(54px, calc((var(--screen-h) - 290px) / 4.6), 76px);
   --pin-gap: clamp(10px, calc(var(--screen-h) * 0.03), 24px);
-  --font: 'Inter Tight Variable', 'Inter Tight', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font: 'Onest Variable', 'Onest', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* Только для надписи GUDEX на карте: широкий фирменный шрифт. */
+  --font-brand: 'Unbounded Variable', 'Onest Variable', system-ui, sans-serif;
   color-scheme: dark;
 }
 
@@ -686,6 +688,7 @@ textarea {
 
 /* ─── Карта ──────────────────────────────────────────────────────────── */
 
+/* Карта «Аврора»: тёмное стекло, синее и голубое сияние фирменных цветов, контурный щит и лёгкое зерно. */
 .bank-card {
   position: relative;
   width: 100%;
@@ -694,41 +697,109 @@ textarea {
   font-weight: 400;
   aspect-ratio: 1.586;
   border-radius: var(--radius-lg);
-  padding: 22px;
+  padding: 20px 22px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   overflow: hidden;
-  background: radial-gradient(120% 140% at 100% 0%, #1d2a4d 0%, #10131c 45%, #090b11 100%);
-  border: 1px solid rgba(97, 140, 255, 0.28);
-  box-shadow: 0 18px 40px rgba(18, 52, 140, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  /* The shield and the grain sit between the background and the text. */
+  isolation: isolate;
+  background:
+    radial-gradient(60% 85% at 88% 8%, rgba(46, 102, 233, 0.95), transparent 62%),
+    radial-gradient(55% 75% at 6% 100%, rgba(61, 174, 236, 0.65), transparent 62%),
+    radial-gradient(40% 50% at 58% 62%, rgba(122, 92, 255, 0.35), transparent 70%),
+    #060912;
+  box-shadow: 0 18px 40px rgba(20, 60, 180, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 0 0 1px rgba(255, 255, 255, 0.07);
   color: #fff;
 }
 
-.bank-card .watermark {
+.bank-card-shield {
   position: absolute;
-  right: -28px;
-  bottom: -36px;
-  opacity: 0.07;
+  z-index: -1;
+  right: -34px;
+  top: -26px;
+  width: 260px;
+  height: 296px;
+  fill: none;
+  stroke: rgba(160, 200, 255, 0.35);
+  stroke-width: 0.35;
   pointer-events: none;
 }
 
-.bank-card.frozen > :not(.card-overlay) {
+.bank-card-grain {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  opacity: 0.22;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  pointer-events: none;
+}
+
+.bank-card.frozen > :not(.card-overlay):not(.bank-card-grain) {
   opacity: 0.4;
 }
 
+.bank-card-logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-brand);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+
+.bank-card-tag {
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  font-variant-numeric: tabular-nums;
+}
+
+.bank-card-chip {
+  display: block;
+}
+
 .bank-card .number {
-  font-size: 20px;
+  font-size: 19px;
+  /* A revealed 16-digit number fits a 320px screen too. */
+  font-size: clamp(16px, 5.5vw, 19px);
   font-weight: 500;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
+  word-spacing: 0.3em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.bank-card-holder {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.bank-card-holder small {
+  font-size: 11px;
+  opacity: 0.7;
   font-variant-numeric: tabular-nums;
 }
 
 .bank-card .visa {
-  font-size: 26px;
-  font-weight: 800;
-  font-style: italic;
-  letter-spacing: 0.02em;
+  display: block;
+  flex-shrink: 0;
+  width: auto;
+  fill: #fff;
 }
 
 .card-overlay {

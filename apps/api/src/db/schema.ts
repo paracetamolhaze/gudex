@@ -589,6 +589,8 @@ export const supportThreads = pgTable('support_threads', {
   lastSupportMessageAt: timestamp('last_support_message_at', { withTimezone: true }),
   clientReadAt: timestamp('client_read_at', { withTimezone: true }),
   supportReadAt: timestamp('support_read_at', { withTimezone: true }),
+  /** The client sees messages from this moment on; older, closed conversations stay with the operator only. */
+  clientSince: timestamp('client_since', { withTimezone: true }),
   createdAt: createdAt(),
 }, t => [index('support_threads_last_message_idx').on(t.lastMessageAt), check('support_threads_status_check', sql`${t.status} in ('open', 'closed')`)]);
 

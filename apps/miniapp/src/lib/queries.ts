@@ -291,14 +291,19 @@ export function useRecheckKyc() {
 }
 
 // The client's support conversation: refreshed while the screen is open, so answers appear by themselves.
+// The first load of each visit says so: a closed conversation that was read is then cleared and the client starts over.
+// Nothing is kept between visits (gcTime 0): a reopened screen waits for its own first load instead of flashing the old one.
 export function useSupport() {
   const client = useQueryClient();
+  const opened = useRef(false);
   return useQuery({ queryKey: keys.support, queryFn: async () => {
-    const thread = await request<SupportThreadDto>('/v1/support', { cache: 'no-store' });
+    const first = !opened.current;
+    opened.current = true;
+    const thread = await request<SupportThreadDto>(first ? '/v1/support?opened=1' : '/v1/support', { cache: 'no-store' });
     // Opening the conversation marks the answers read.
     client.setQueryData<MeDto>(keys.me, (me) => me ? { ...me, supportUnread: false } : me);
     return thread;
-  }, refetchInterval: 10_000, refetchIntervalInBackground: false, staleTime: 0 });
+  }, refetchInterval: 10_000, refetchIntervalInBackground: false, staleTime: 0, gcTime: 0, refetchOnMount: 'always' });
 }
 
 export function useSendSupport() {

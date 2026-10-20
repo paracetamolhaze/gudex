@@ -169,8 +169,9 @@ export const accountRoutes =
 
     // In-app support: the client's own conversation only.
     app.get('/support', async (request, reply) => {
+      const { opened } = parse(z.object({ opened: z.literal('1').optional() }), request.query);
       reply.header('Cache-Control', 'no-store');
-      return services.support.clientThread(request.userId);
+      return services.support.clientThread(request.userId, opened === '1');
     });
 
     app.post('/support/messages', async (request, reply) => {

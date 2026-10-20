@@ -14,9 +14,16 @@ import { useActivity, useCardSensitive, useCards, useConfig, useMe, useOperation
 import { haptic, platform } from '../lib/telegram';
 
 const DETAILS_VISIBLE_MS = 30_000;
-// Apple Pay only on Apple devices, Google Pay on Android; desktop and web clients see both.
-export const walletKind: 'apple' | 'google' | 'both' = platform === 'android' ? 'google' : platform === 'ios' || platform === 'macos' ? 'apple' : 'both';
-export const walletName = walletKind === 'google' ? 'Google Pay' : walletKind === 'apple' ? 'Apple Pay' : 'Apple Pay / Google Pay';
+// One wallet by device: Apple Pay on Apple devices, Google Pay on the rest. Only computers, where the card is added on
+// a phone anyway, also get the other guide on the wallet screen. Telegram X reports 'android_x'; Telegram Web on a
+// phone is told apart by the browser's user agent.
+const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+const appleDevice = /iPhone|iPad|iPod|Macintosh/.test(userAgent);
+const phoneDevice = /Android|iPhone|iPad|iPod/.test(userAgent);
+const android = platform === 'android' || platform === 'android_x';
+export const walletKind: 'apple' | 'google' = platform === 'ios' || platform === 'macos' || (!android && appleDevice) ? 'apple' : 'google';
+export const walletName = walletKind === 'apple' ? 'Apple Pay' : 'Google Pay';
+export const walletBoth = !android && platform !== 'ios' && platform !== 'macos' && !phoneDevice;
 
 // Реквизиты карты: только после кода-пароля или биометрии, скрываются через 30 секунд.
 export function useRevealDetails(cardId: string) {
@@ -157,7 +164,7 @@ function CardView({ card }: { card: CardDto }) {
             <span className="display mono">{fmt.amount(card.balance, 'USD')}</span>
           </div>
           <div className="actions">
-            <ActionButton icon="plus" label={t('card.topup')} disabled={!active || !(config?.integration.capabilities.topup || card.topupAddresses?.length)} onClick={() => navigate(`/card/topup?cardId=${card.id}`)} />
+            <ActionButton icon="topUp" label={t('card.topup')} disabled={!active || !(config?.integration.capabilities.topup || card.topupAddresses?.length)} onClick={() => navigate(`/card/topup?cardId=${card.id}`)} />
             <ActionButton
               icon={reveal.details ? 'eyeOff' : 'eye'}
               label={reveal.details ? t('card.hideDetails') : t('card.details')}

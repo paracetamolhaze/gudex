@@ -93,7 +93,7 @@ export function Support() {
       {!thread.data.messages.length ? <div className="row">
         <Mascot pose="hello" size={90} motion="none" />
         <span className="muted grow">{t('support.intro')}</span>
-      </div> : null}
+      </div> : thread.data.status === 'closed' ? <Notice text={t('support.closed')} /> : null}
       <ChatView messages={thread.data.messages} mine="client" theirsLabel={t('support.team')} sending={send.isPending}
         error={send.error ? fmt.error(send.error) : null}
         onSend={async text => {

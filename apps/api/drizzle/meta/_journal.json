@@ -43,6 +43,7 @@
     {"idx": 20, "version": "7", "when": 1792152000017, "tag": "0020_mail_codes", "breakpoints": true},
     {"idx": 21, "version": "7", "when": 1792152000018, "tag": "0021_mail_otp_only", "breakpoints": true},
     {"idx": 22, "version": "7", "when": 1792152000019, "tag": "0022_terms_acceptance", "breakpoints": true},
-    {"idx": 23, "version": "7", "when": 1792152000020, "tag": "0023_support_chat", "breakpoints": true}
+    {"idx": 23, "version": "7", "when": 1792152000020, "tag": "0023_support_chat", "breakpoints": true},
+    {"idx": 24, "version": "7", "when": 1792152000021, "tag": "0024_support_client_since", "breakpoints": true}
   ]
 }

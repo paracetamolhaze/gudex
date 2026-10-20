@@ -83,4 +83,31 @@ describe('in-app support', () => {
     expect(flood.status).toBe(429);
     expect(flood.body.error.code).toBe('rate_limited');
   });
+
+  it('starts the client over after a closed conversation was read, and keeps an unread answer on screen once', async () => {
+    const alice = await registerUser(ctx);
+    const a = api(ctx, alice.token);
+    await a.post('/v1/support/messages', { text: 'Привет' });
+    const userId = (await a.get('/v1/me')).body.id as string;
+    const op = await admin();
+    await op.post(`/v1/admin/support/${userId}/status`, { status: 'closed' });
+
+    // A refresh while the screen stays open keeps the conversation; opening the screen again starts over.
+    expect((await a.get('/v1/support')).body.messages).toHaveLength(1);
+    expect((await a.get('/v1/support?opened=1')).body).toEqual({ status: 'closed', unread: false, messages: [] });
+    expect((await a.get('/v1/support?opened=yes')).status).toBe(400);
+
+    // The next question is a new conversation for the client; the operator keeps the whole history.
+    const next = await a.post('/v1/support/messages', { text: 'Новый вопрос' });
+    expect(next.body.messages.map((m: { text: string }) => m.text)).toEqual(['Новый вопрос']);
+    expect((await op.get(`/v1/admin/support/${userId}`)).body.messages).toHaveLength(2);
+
+    // An answer closed before the client saw it stays until the client has read it.
+    await op.post(`/v1/admin/support/${userId}/messages`, { text: 'Готово' });
+    await op.post(`/v1/admin/support/${userId}/status`, { status: 'closed' });
+    const kept = await a.get('/v1/support?opened=1');
+    expect(kept.body.status).toBe('closed');
+    expect(kept.body.messages.map((m: { text: string }) => m.text)).toEqual(['Новый вопрос', 'Готово']);
+    expect((await a.get('/v1/support?opened=1')).body.messages).toEqual([]);
+  });
 });

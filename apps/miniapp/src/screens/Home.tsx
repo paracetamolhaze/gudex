@@ -58,7 +58,7 @@ export function Home() {
       ) : null}
 
       {clientReady && (canDeposit || moneyOut) ? <div className="actions">
-        {canDeposit ? <ActionButton icon="arrowDown" label={t('home.deposit')} onClick={() => navigate('/deposit')} /> : null}
+        {canDeposit ? <ActionButton icon="topUp" label={t('home.deposit')} onClick={() => navigate('/deposit')} /> : null}
         {moneyOut ? <ActionButton icon="send" label={t('home.transfer')} onClick={() => navigate('/transfer')} /> : null}
         {moneyOut ? <ActionButton icon="arrowUpRight" label={t('home.withdraw')} onClick={() => navigate('/withdraw')} /> : null}
         <ActionButton icon="card" label={t('home.card')} onClick={() => navigate('/card')} />

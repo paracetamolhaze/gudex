@@ -1,4 +1,5 @@
-import '@fontsource-variable/inter-tight';
+import '@fontsource-variable/onest';
+import '@fontsource-variable/unbounded';
 import './styles.css';
 import './i18n';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';

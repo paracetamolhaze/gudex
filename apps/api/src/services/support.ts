@@ -32,8 +32,8 @@ const newer = (at: Date | null, read: Date | null) => at !== null && (read === n
 export class SupportService {
   constructor(private readonly db: Db, private readonly config: Config) {}
 
-  private async messages(userId: string, db: Db | Tx = this.db): Promise<SupportMessageDto[]> {
-    const rows = await db.select().from(supportMessages).where(eq(supportMessages.userId, userId))
+  private async messages(userId: string, since: Date | null = null, db: Db | Tx = this.db): Promise<SupportMessageDto[]> {
+    const rows = await db.select().from(supportMessages).where(and(eq(supportMessages.userId, userId), since ? gte(supportMessages.createdAt, since) : undefined))
       .orderBy(desc(supportMessages.createdAt), desc(supportMessages.id)).limit(HISTORY);
     return rows.reverse().map(toMessage);
   }
@@ -46,13 +46,20 @@ export class SupportService {
   // ─── Client ─────────────────────────────────────────────────────────
 
   /** Opening the conversation marks the answers read. The marker never falls behind the newest answer on the locked row,
-   * so an answer committed while this request waited for the row is not left unread forever. */
-  async clientThread(userId: string): Promise<SupportThreadDto> {
-    const now = new Date();
+   * so an answer committed while this request waited for the row is not left unread forever.
+   * `opened` is the first load of the screen: a closed conversation whose answers were all read before is cleared, and the
+   * client starts over. Refreshes while the screen stays open never clear it, so an answer does not vanish while being read. */
+  async clientThread(userId: string, opened = false): Promise<SupportThreadDto> {
+    const now = new Date().toISOString();
     const [thread] = await this.db.update(supportThreads)
-      .set({ clientReadAt: sql`greatest(${now.toISOString()}::timestamptz, coalesce(${supportThreads.lastSupportMessageAt}, ${now.toISOString()}::timestamptz))` })
+      .set({
+        clientReadAt: sql`greatest(${now}::timestamptz, coalesce(${supportThreads.lastSupportMessageAt}, ${now}::timestamptz))`,
+        // The condition reads the row as it was before this update, so an answer first seen right now keeps the conversation.
+        ...opened ? { clientSince: sql`case when ${supportThreads.status} = 'closed' and (${supportThreads.lastSupportMessageAt} is null
+          or ${supportThreads.clientReadAt} >= ${supportThreads.lastSupportMessageAt}) then ${now}::timestamptz else ${supportThreads.clientSince} end` } : {},
+      })
       .where(eq(supportThreads.userId, userId)).returning();
-    return this.dto(thread, thread ? await this.messages(userId) : [], 'client');
+    return this.dto(thread, thread ? await this.messages(userId, thread.clientSince) : [], 'client');
   }
 
   async hasUnreadAnswer(userId: string): Promise<boolean> {

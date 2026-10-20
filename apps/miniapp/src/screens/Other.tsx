@@ -19,7 +19,7 @@ import { useAdminAccess } from '../lib/admin';
 import { haptic } from '../lib/telegram';
 import { APP_VERSION } from '../lib/version';
 import { LegalSheet } from './Legal';
-import { CardDetails, useRevealDetails, walletKind, walletName } from './Card';
+import { CardDetails, useRevealDetails, walletBoth, walletKind } from './Card';
 import { BillingAddressFields } from './CardBilling';
 import { FeePaymentPanel } from '../components/FeePayment';
 
@@ -558,15 +558,17 @@ export function WalletPay() {
   const { data: config } = useConfig();
   const reveal = useRevealDetails(params.get('cardId') ?? '');
   const fmt = useFormat();
-  const guides = [
-    ...(walletKind !== 'google' ? [{ title: 'Apple Pay', steps: [t('walletPay.ios1'), t('walletPay.ios2'), t('walletPay.ios3'), t('walletPay.ios4')] }] : []),
-    ...(walletKind !== 'apple' ? [{ title: 'Google Pay', steps: [t('walletPay.android1'), t('walletPay.android2'), t('walletPay.android3'), t('walletPay.android4')] }] : []),
-  ];
+  const apple = { title: 'Apple Pay', steps: [t('walletPay.ios1'), t('walletPay.ios2'), t('walletPay.ios3'), t('walletPay.ios4')] };
+  const google = { title: 'Google Pay', steps: [t('walletPay.android1'), t('walletPay.android2'), t('walletPay.android3'), t('walletPay.android4')] };
+  // This device's wallet first; on a computer the other one follows, since the card is added on a phone.
+  const own = walletKind === 'apple' ? apple : google;
+  const guides = walletBoth ? [own, own === apple ? google : apple] : [own];
+  const wallets = guides.map(guide => guide.title).join(' / ');
 
   return (
-    <Page title={walletName}>
+    <Page title={wallets}>
       <Mascot pose="pay" size={200} motion="pop" />
-      <span>{t('walletPay.intro', { wallet: walletName })}</span>
+      <span>{t('walletPay.intro', { wallet: wallets })}</span>
       {guides.map(guide => <Surface key={guide.title} className="stack">
         {guides.length > 1 ? <span className="body-medium" style={{ fontWeight: 600 }}>{guide.title}</span> : null}
         {guide.steps.map((step, i) => (
@@ -581,7 +583,7 @@ export function WalletPay() {
       ) : (
         <Button title={t('walletPay.showDetails')} icon="lock" variant="secondary" loading={reveal.loading} onClick={reveal.reveal} />
       )}
-      {config?.devTools ? <Notice tone="warning" icon="flask" text={t('walletPay.testCard', { wallet: walletName })} /> : null}
+      {config?.devTools ? <Notice tone="warning" icon="flask" text={t('walletPay.testCard', { wallet: wallets })} /> : null}
       {reveal.error ? <Notice tone="danger" text={fmt.error(reveal.error)} /> : null}
       {reveal.element}
     </Page>

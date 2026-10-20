@@ -560,6 +560,7 @@ export const en: Translations = {
     send: 'Send',
     team: 'GUDEX support',
     unread: 'New answer',
+    closed: 'This conversation is closed. If you still have questions, just write — we’ll pick it up.',
     hint: 'Never send your passcode, confirmation codes or card details — not even to us.',
   },
 };
