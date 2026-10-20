@@ -5,7 +5,7 @@ import { adminNotifications, users } from '../db/schema';
 import { enqueue, PermanentJobError, type JobContext, type JobHandler } from '../queue/queue';
 import type { BotApi } from '../telegram/bot';
 
-type Stage = 'verification' | 'issuance' | 'card_request';
+type Stage = 'verification' | 'issuance' | 'card_request' | 'support';
 type AdminConfig = Pick<Config, 'adminTelegramIds' | 'publicUrl'>;
 
 // The caller passes its business transaction, so a rolled-back application cannot notify an administrator.
@@ -27,7 +27,7 @@ export async function notifyAdmins(
   }
 }
 
-const STAGES: Record<Stage, string> = { verification: 'Верификация', issuance: 'Выпуск карты', card_request: 'Пополнение или заморозка карты' };
+const STAGES: Record<Stage, string> = { verification: 'Верификация', issuance: 'Выпуск карты', card_request: 'Пополнение или заморозка карты', support: 'Поддержка' };
 
 export class AdminNotificationService {
   constructor(
@@ -58,7 +58,9 @@ export class AdminNotificationService {
       if (!user) return;
 
       // No documents, names, contact details, card credentials or verification codes leave through Telegram.
-      const text = `<b>Новая заявка</b>\nКлиент GUDEX: <code>${user.id}</code>\nTelegram ID: <code>${user.telegramId}</code>\nЭтап: ${stage}`;
+      // A support notice says only that a client wrote: the message itself is read in the admin.
+      const title = notification.stage === 'support' ? 'Новое обращение в поддержку' : 'Новая заявка';
+      const text = `<b>${title}</b>\nКлиент GUDEX: <code>${user.id}</code>\nTelegram ID: <code>${user.telegramId}</code>\nЭтап: ${stage}`;
       // No button: the administrator opens the admin screen from their own profile in the Mini App.
       await context?.assertActive();
       await this.bot.sendMessage(notification.recipientTelegramId, text);

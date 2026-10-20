@@ -66,7 +66,10 @@ async function inspectLocked(tx: Tx): Promise<Scope> {
     (select count(*)::int from fee_payments where user_id = ${userId}::uuid) as "feePayments",
     (select count(*)::int from ledger_accounts where user_id = ${userId}::uuid) as "ledgerAccounts",
     (select count(*)::int from admin_notifications where user_id = ${userId}::uuid) as "adminNotifications",
-    (select count(*)::int from admin_audit_log where target_user_id = ${userId}::uuid) as "adminAuditLog"`);
+    (select count(*)::int from admin_audit_log where target_user_id = ${userId}::uuid) as "adminAuditLog",
+    (select count(*)::int from mail_addresses where user_id = ${userId}::uuid) as "mailAddresses",
+    (select count(*)::int from inbound_emails where user_id = ${userId}::uuid) as "inboundEmails",
+    (select count(*)::int from support_messages where user_id = ${userId}::uuid) as "supportMessages"`);
   return { plan: { status: reasons.length ? 'blocked' : 'ready', userId, blockedReasons: reasons.sort(),
     remove: { users: 1, ...remove, jobs: jobs.length, upayJournal: references.length, unusedSponsorships: grants.length } },
     jobIds: jobs.map(job => String(job.id)), references };
@@ -96,6 +99,11 @@ export async function zeroOwnerAccount(db: Db, expectedUserId: string): Promise<
       sql`delete from kyc_documents where user_id = ${userId}::uuid`,
       sql`delete from kyc_profiles where user_id = ${userId}::uuid`,
       sql`delete from biometric_tokens where user_id = ${userId}::uuid`,
+      sql`update mail_senders set created_by = null where created_by = ${userId}::uuid`,
+      sql`delete from inbound_emails where user_id = ${userId}::uuid`,
+      sql`delete from mail_addresses where user_id = ${userId}::uuid`,
+      sql`delete from support_messages where user_id = ${userId}::uuid`,
+      sql`delete from support_threads where user_id = ${userId}::uuid`,
       sql`delete from ledger_accounts where user_id = ${userId}::uuid`,
       sql`delete from card_issue_sponsorships where telegram_id = ${OWNER_TELEGRAM_ID}::bigint and operation_id is null and consumed_at is null`,
       sql`delete from users where id = ${userId}::uuid and telegram_id = ${OWNER_TELEGRAM_ID}::bigint`,

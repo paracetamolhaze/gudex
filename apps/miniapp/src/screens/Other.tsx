@@ -125,6 +125,12 @@ export function Profile() {
           <span className="body-medium grow">{t('profile.tariffs')}</span>
           <Icon name="chevronRight" color="var(--muted)" size={18} />
         </button>
+        <button className="list-item" onClick={() => navigate('/support')}>
+          <Icon name="chat" color="var(--primary)" />
+          <span className="body-medium grow">{t('profile.support')}</span>
+          {me?.supportUnread ? <span className="unread-dot" aria-label={t('support.unread')} /> : null}
+          <Icon name="chevronRight" color="var(--muted)" size={18} />
+        </button>
         <button className="list-item" onClick={() => navigate('/help')}>
           <Icon name="help" color="var(--primary)" />
           <span className="body-medium grow">{t('profile.help')}</span>

@@ -15,6 +15,7 @@ import { Home } from './screens/Home';
 import { Buy } from './screens/Buy';
 import { Help, Referral, Tariffs } from './screens/Info';
 import { LegalScreen, TermsGate } from './screens/Legal';
+import { AdminSupportThread, Support } from './screens/Support';
 import { Transfer, Withdraw } from './screens/Money';
 import { History, Kyc, PinChange, Profile, WalletPay } from './screens/Other';
 import { CardIssue, CardTopup, Deposit } from './screens/Wallet';
@@ -63,6 +64,8 @@ function MainApp() {
         <Route path="/help" element={<Help />} />
         <Route path="/buy" element={<Buy />} />
         <Route path="/legal/:kind" element={<LegalScreen />} />
+        <Route path="/support" element={<Support />} />
+        <Route path="/admin/support/:userId" element={<AdminSupportThread />} />
       </Routes>
       {TAB_PATHS.includes(location.pathname) ? <TabBar /> : null}
     </>

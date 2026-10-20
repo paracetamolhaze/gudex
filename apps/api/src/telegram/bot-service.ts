@@ -186,7 +186,7 @@ export class BotService {
     }
 
     if (!this.config.publicUrl) return;
-    await this.bot.sendMessage(message.chat.id, ru ? 'Всё управление картой — в приложении GUDEX 👇' : 'Everything is managed in the GUDEX app 👇', {
+    await this.bot.sendMessage(message.chat.id, ru ? 'Всё управление картой — в приложении GUDEX. Вопрос? Напишите в «Профиль» › «Поддержка» 👇' : 'Everything is managed in the GUDEX app. Questions? Write to “Profile” › “Support” 👇', {
       text: ru ? 'Открыть GUDEX' : 'Open GUDEX',
       url: this.config.publicUrl,
     });

@@ -12,6 +12,7 @@ export type Locale = 'ru' | 'en';
 
 export type ErrorCode =
   | 'validation'
+  | 'rate_limited'
   | 'unauthorized'
   | 'forbidden'
   | 'not_found'
@@ -97,6 +98,22 @@ export interface MeDto {
   kyc: KycDto;
   /** The client accepted the current Terms of Use and Privacy Policy (TERMS_VERSION). */
   termsAccepted: boolean;
+  /** Support answered and the client has not opened the conversation since. */
+  supportUnread: boolean;
+}
+
+export interface SupportMessageDto {
+  id: string;
+  author: 'client' | 'support';
+  text: string;
+  createdAt: string;
+}
+
+export interface SupportThreadDto {
+  status: 'open' | 'closed';
+  /** For the client: an answer not read yet; for the operator: a client message not read yet. */
+  unread: boolean;
+  messages: SupportMessageDto[];
 }
 
 /** Bump when the Terms of Use or the Privacy Policy change: every client accepts the new text once. */

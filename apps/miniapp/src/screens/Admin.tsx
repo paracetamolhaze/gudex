@@ -7,8 +7,8 @@ import { Button, Field, Notice, Page, QueryError, Spinner, Surface } from '../co
 import { ApiError } from '../lib/api';
 import { CARD_TOPUP_ROUTES, type CardTopupAddresses } from '@gudex/shared';
 import { adminKeys, adminQueryValid, assignWalletTransfer, canLinkManualCard, clientMailValid, documentObjectUrl, getAdminDocument, resolveAdminRequest,
-  saveCardTopupAddresses, saveClientMail, updateAdminClient, useAdminAccess, useAdminApplications, useAdminClient, useAdminWalletTransfers,
-  type AdminClient, type AdminDocument } from '../lib/admin';
+  saveCardTopupAddresses, saveClientMail, updateAdminClient, useAdminAccess, useAdminApplications, useAdminClient, useAdminSupportInbox,
+  useAdminWalletTransfers, type AdminClient, type AdminDocument } from '../lib/admin';
 import './Admin.css';
 
 const statuses: Record<string, string> = {
@@ -331,6 +331,30 @@ function WalletTransfers() {
   </Surface>;
 }
 
+// Client questions from «Профиль › Поддержка»; unanswered ones first.
+function SupportInbox() {
+  const navigate = useNavigate();
+  const [status, setStatus] = useState<'open' | 'all'>('open');
+  const inbox = useAdminSupportInbox(status, true);
+  const waiting = inbox.data?.filter(item => item.unread).length ?? 0;
+  return <Surface className="stack">
+    <div className="row between"><h2 className="heading">Обращения{waiting ? ` · ${waiting}` : ''}</h2>
+      <button className="link" disabled={inbox.isFetching} onClick={() => void inbox.refetch()}>Обновить</button></div>
+    <div className="admin-fields">
+      <Button small title="Открытые" variant={status === 'open' ? 'primary' : 'secondary'} onClick={() => setStatus('open')} />
+      <Button small title="Все" variant={status === 'all' ? 'primary' : 'secondary'} onClick={() => setStatus('all')} />
+    </div>
+    {inbox.isPending ? <Spinner /> : inbox.isError ? <QueryError error={inbox.error} onRetry={() => void inbox.refetch()} /> :
+      !inbox.data.length ? <p className="caption muted">{status === 'open' ? 'Открытых обращений нет.' : 'Обращений пока не было.'}</p> :
+      inbox.data.map(item => <button key={item.userId} className="admin-queue-item" onClick={() => navigate(`/admin/support/${item.userId}`)}>
+        <span className="row between"><strong>{item.name || (item.username ? `@${item.username}` : `Telegram ${item.telegramId}`)}</strong>
+          {item.unread ? <span className="admin-status attention">Ждёт ответа</span> : item.status === 'closed' ? <span className="admin-status">Закрыто</span> : null}</span>
+        {item.preview ? <span className="caption muted ellipsis">{item.preview.author === 'support' ? 'Вы: ' : ''}{item.preview.text}</span> : null}
+        <span className="caption muted">{date(item.lastMessageAt)}</span>
+      </button>)}
+  </Surface>;
+}
+
 export function Admin() {
   const navigate = useNavigate();
   const { query: selectedQuery } = useParams<{ query?: string }>();
@@ -363,6 +387,7 @@ export function Admin() {
           onChange={event => setSearch(event.target.value)} error={searchError} />
         <button type="submit" className="btn primary">Найти</button>
       </form>
+      <SupportInbox />
       <WalletTransfers />
       <div className="admin-grid">
         <Surface className="admin-queue stack">

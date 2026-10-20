@@ -23,7 +23,8 @@ export type NotifyEvent =
   | { type: 'application_received'; amount: string; asset: string; sponsored?: boolean }
   | { type: 'fee_paid'; amount: string; asset: string; missing?: string; minutesLeft?: number }
   | { type: 'application_paid'; amount: string; asset: string }
-  | { type: 'application_rejected'; reason: string; amount?: string; asset?: string; sponsored?: boolean };
+  | { type: 'application_rejected'; reason: string; amount?: string; asset?: string; sponsored?: boolean }
+  | { type: 'support_reply' };
 
 export async function notify(db: DbOrTx, userId: string, event: NotifyEvent): Promise<void> {
   await enqueue(db, 'notify', { userId, event }, { maxAttempts: 5 });
@@ -76,6 +77,8 @@ const MESSAGES: Record<'ru' | 'en', (e: NotifyEvent) => string> = {
         return [`Верификация не пройдена: ${escape(e.reason)}`,
           ...(e.amount && e.asset && !e.sponsored ? [`${e.amount} ${e.asset} вернулись на баланс.`] : []),
           'Откройте приложение, чтобы отправить данные заново.'].join('\n');
+      case 'support_reply':
+        return '💬 <b>Поддержка GUDEX ответила</b>\nОткройте приложение: «Профиль» › «Поддержка».';
     }
   },
   en: (e) => {
@@ -121,6 +124,8 @@ Please wait while we check your details. We will message you when the card is re
         return [`Verification declined: ${escape(e.reason)}`,
           ...(e.amount && e.asset && !e.sponsored ? [`${e.amount} ${e.asset} returned to your balance.`] : []),
           'Open the app to submit your details again.'].join('\n');
+      case 'support_reply':
+        return '💬 <b>GUDEX support has replied</b>\nOpen the app: “Profile” › “Support”.';
     }
   },
 };

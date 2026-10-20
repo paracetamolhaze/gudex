@@ -90,6 +90,7 @@ export const profileRoutes =
         hasPin: user.pinHash !== null,
         kyc: await services.kyc.get(userId),
         termsAccepted: user.termsVersion === TERMS_VERSION,
+        supportUnread: await services.support.hasUnreadAnswer(userId),
       };
     };
 
@@ -164,6 +165,18 @@ export const accountRoutes =
       await services.auth.assertTermsAccepted(request.userId);
       reply.header('Cache-Control', 'no-store');
       return services.cardApplications.payFromBalance(request.userId, body.asset);
+    });
+
+    // In-app support: the client's own conversation only.
+    app.get('/support', async (request, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      return services.support.clientThread(request.userId);
+    });
+
+    app.post('/support/messages', async (request, reply) => {
+      const { text } = parse(z.object({ text: z.string().max(4000) }).strict(), request.body);
+      reply.header('Cache-Control', 'no-store');
+      return services.support.clientWrite(request.userId, text);
     });
 
     app.get('/wallet', async (request) => services.wallet.getWallet(request.userId));

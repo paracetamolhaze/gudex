@@ -148,6 +148,13 @@ export async function resetTestAccount(db: Db, telegramId: string, expectedUserI
     await tx.execute(sql`delete from kyc_documents where user_id = ${userId}::uuid`);
     await tx.execute(sql`delete from kyc_profiles where user_id = ${userId}::uuid`);
     await tx.execute(sql`delete from biometric_tokens where user_id = ${userId}::uuid`);
+    await tx.execute(sql`delete from admin_notifications where user_id = ${userId}::uuid`);
+    await tx.execute(sql`delete from admin_audit_log where target_user_id = ${userId}::uuid`);
+    await tx.execute(sql`update mail_senders set created_by = null where created_by = ${userId}::uuid`);
+    await tx.execute(sql`delete from inbound_emails where user_id = ${userId}::uuid`);
+    await tx.execute(sql`delete from mail_addresses where user_id = ${userId}::uuid`);
+    await tx.execute(sql`delete from support_messages where user_id = ${userId}::uuid`);
+    await tx.execute(sql`delete from support_threads where user_id = ${userId}::uuid`);
     await tx.execute(sql`delete from ledger_accounts where user_id = ${userId}::uuid and balance = 0`);
     await tx.execute(sql`delete from card_issue_sponsorships where telegram_id = ${telegramId}::bigint and operation_id is null and consumed_at is null`);
     await tx.execute(sql`delete from users where id = ${userId}::uuid and telegram_id = ${telegramId}::bigint`);

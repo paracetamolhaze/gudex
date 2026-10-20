@@ -1,6 +1,6 @@
 import type { CardTopupAddresses } from '@gudex/shared';
 import { useQuery } from '@tanstack/react-query';
-import type { WalletTransferDto } from '@gudex/shared';
+import type { SupportThreadDto, WalletTransferDto } from '@gudex/shared';
 import { request } from './api';
 
 export interface AdminDocument {
@@ -69,6 +69,17 @@ export interface AdminDocumentContent {
   mimeType: AdminDocument['mimeType'];
   base64: string;
   expiresAt?: string;
+}
+
+export interface AdminSupportItem {
+  userId: string;
+  telegramId: string;
+  username: string | null;
+  name: string | null;
+  status: 'open' | 'closed';
+  unread: boolean;
+  lastMessageAt: string;
+  preview: { author: 'client' | 'support'; text: string } | null;
 }
 
 export interface AdminProviderCard {
@@ -166,4 +177,26 @@ export function saveClientMail(userId: string, address: string, confirmationToke
 export function clientMailValid(value: string, domain: string | null): boolean {
   const match = /^([a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?)@((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63})$/.exec(value.trim().toLowerCase());
   return Boolean(match) && !match![1]!.includes('..') && (!domain || match![2] === domain);
+}
+
+// Support conversations: refreshed while the admin is open, so new questions show up by themselves.
+export function useAdminSupportInbox(status: 'open' | 'all', enabled: boolean) {
+  return useQuery({ queryKey: [...adminKeys.all, 'support', status],
+    queryFn: ({ signal }) => request<AdminSupportItem[]>(`${PREFIX}/support?status=${status}`, { cache: 'no-store', signal }),
+    enabled, retry: false, staleTime: 0, gcTime: 0, refetchInterval: 15_000, refetchIntervalInBackground: false });
+}
+
+export function useAdminSupportThread(userId: string) {
+  return useQuery({ queryKey: [...adminKeys.all, 'support-thread', userId],
+    queryFn: ({ signal }) => request<SupportThreadDto>(`${PREFIX}/support/${encodeURIComponent(userId)}`, { cache: 'no-store', signal }),
+    retry: false, staleTime: 0, gcTime: 0, refetchInterval: 10_000, refetchIntervalInBackground: false });
+}
+
+// A chat answer needs no passcode confirmation: the admin session is already unlocked.
+export function sendAdminSupport(userId: string, text: string) {
+  return request<SupportThreadDto>(`${PREFIX}/support/${encodeURIComponent(userId)}/messages`, { method: 'POST', body: { text }, cache: 'no-store' });
+}
+
+export function setAdminSupportStatus(userId: string, status: 'open' | 'closed') {
+  return request<SupportThreadDto>(`${PREFIX}/support/${encodeURIComponent(userId)}/status`, { method: 'POST', body: { status }, cache: 'no-store' });
 }

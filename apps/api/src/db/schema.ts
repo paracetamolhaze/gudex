@@ -544,7 +544,7 @@ export const adminNotifications = pgTable('admin_notifications', {
   createdAt: createdAt(),
   sentAt: timestamp('sent_at', { withTimezone: true }),
 }, t => [uniqueIndex('admin_notifications_event_recipient').on(t.eventKey, t.recipientTelegramId),
-  check('admin_notifications_stage', sql`${t.stage} in ('verification', 'issuance', 'card_request')`)]);
+  check('admin_notifications_stage', sql`${t.stage} in ('verification', 'issuance', 'card_request', 'support')`)]);
 
 // ─── Почта клиентов для кодов UPay ───────────────────────────────────────
 // Адрес на нашем домене привязан к одному клиенту; письма приходят через Cloudflare Email Routing.
@@ -577,6 +577,30 @@ export const inboundEmails = pgTable('inbound_emails', {
   index('inbound_emails_status_idx').on(t.status, t.createdAt),
   check('inbound_emails_subject_check', sql`${t.subject} is null or length(${t.subject}) <= 200`),
   check('inbound_emails_status_check', sql`${t.status} in ('queued', 'delivered', 'no_code', 'unknown_sender', 'stale', 'rate_limited', 'expired', 'failed')`)]);
+
+// ─── Поддержка в приложении ──────────────────────────────────────────────
+// Один диалог на клиента. Прочитанность — по времени: что новее отметки, то не прочитано.
+
+export const supportThreads = pgTable('support_threads', {
+  userId: uuid('user_id').primaryKey().references(() => users.id),
+  status: text('status').notNull().default('open'),
+  lastMessageAt: timestamp('last_message_at', { withTimezone: true }).notNull().defaultNow(),
+  lastClientMessageAt: timestamp('last_client_message_at', { withTimezone: true }),
+  lastSupportMessageAt: timestamp('last_support_message_at', { withTimezone: true }),
+  clientReadAt: timestamp('client_read_at', { withTimezone: true }),
+  supportReadAt: timestamp('support_read_at', { withTimezone: true }),
+  createdAt: createdAt(),
+}, t => [index('support_threads_last_message_idx').on(t.lastMessageAt), check('support_threads_status_check', sql`${t.status} in ('open', 'closed')`)]);
+
+export const supportMessages = pgTable('support_messages', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => supportThreads.userId),
+  author: text('author').notNull(),
+  adminUserId: uuid('admin_user_id'),
+  text: text('text').notNull(),
+  createdAt: createdAt(),
+}, t => [index('support_messages_thread_idx').on(t.userId, t.createdAt), check('support_messages_author_check', sql`${t.author} in ('client', 'support')`),
+  check('support_messages_text_check', sql`length(${t.text}) between 1 and 2000`)]);
 
 export const adminAuditLog = pgTable('admin_audit_log', {
   id: uuid('id').primaryKey().defaultRandom(),

@@ -34,7 +34,7 @@ import type {
   WalletDto,
   WithdrawalDto,
 } from '@gudex/shared';
-import { TERMS_VERSION } from '@gudex/shared';
+import { type SupportThreadDto, TERMS_VERSION } from '@gudex/shared';
 import { request } from './api';
 import { fundingEnabled } from './funding';
 import { sendCardApplication, sendKycSubmission, type CardApplicationSubmission, type KycSubmission, type KycUploadCache } from './kyc';
@@ -56,6 +56,7 @@ export const keys = {
   invoice: ['deposit-invoice'] as const,
   activity: ['activity'] as const,
   feePayment: ['fee-payment'] as const,
+  support: ['support'] as const,
 };
 
 export function useConfig() {
@@ -286,6 +287,27 @@ export function useRecheckKyc() {
     mutationFn: () => request<KycDto>('/v1/kyc/recheck', { method: 'POST' }),
     onSuccess: (kyc) => client.setQueryData<MeDto>(keys.me, (me) => me ? { ...me, kyc } : me),
     onSettled: () => client.invalidateQueries({ queryKey: keys.me }),
+  });
+}
+
+// The client's support conversation: refreshed while the screen is open, so answers appear by themselves.
+export function useSupport() {
+  const client = useQueryClient();
+  return useQuery({ queryKey: keys.support, queryFn: async () => {
+    const thread = await request<SupportThreadDto>('/v1/support', { cache: 'no-store' });
+    // Opening the conversation marks the answers read.
+    client.setQueryData<MeDto>(keys.me, (me) => me ? { ...me, supportUnread: false } : me);
+    return thread;
+  }, refetchInterval: 10_000, refetchIntervalInBackground: false, staleTime: 0 });
+}
+
+export function useSendSupport() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (text: string) => request<SupportThreadDto>('/v1/support/messages', { method: 'POST', body: { text }, cache: 'no-store' }),
+    // A refresh already in flight would bring back the conversation without the new message.
+    onMutate: () => client.cancelQueries({ queryKey: keys.support }),
+    onSuccess: (thread) => client.setQueryData(keys.support, thread),
   });
 }
 

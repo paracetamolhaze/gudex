@@ -3,6 +3,7 @@ import type { ZodType } from 'zod';
 
 const STATUS: Record<ErrorCode, number> = {
   validation: 400,
+  rate_limited: 429,
   unauthorized: 401,
   forbidden: 403,
   not_found: 404,

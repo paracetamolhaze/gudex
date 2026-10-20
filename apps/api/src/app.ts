@@ -33,6 +33,7 @@ import { ManualAdminService } from './services/manual-admin';
 import { CardApplicationService } from './services/card-application';
 import { FeePaymentService } from './services/fee-payments';
 import { MailService } from './services/mail';
+import { SupportService } from './services/support';
 import { ReferralService } from './services/referrals';
 import { TransferService } from './services/transfers';
 import { WalletService } from './services/wallet';
@@ -79,6 +80,7 @@ export interface Services {
   cardApplications: CardApplicationService;
   feePayments: FeePaymentService;
   mail: MailService;
+  support: SupportService;
   bot: BotService;
 }
 
@@ -121,6 +123,7 @@ export function createServices(deps: Deps): Services {
     cardApplications,
     feePayments,
     mail,
+    support: new SupportService(db, config),
     bot: new BotService(deps.bot, config, auth, notices),
   };
 }

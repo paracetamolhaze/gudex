@@ -13,12 +13,26 @@ export const adminRoutes = (services: Services): FastifyPluginAsync => async app
   requireAuth(app, services);
   app.addHook('preHandler', async request => {
     await services.manualAdmin.assertAdmin(request.userId);
-    if (request.method !== 'GET') {
+    // Answering a client is a chat, not a money action: the admin session is already unlocked by the passcode.
+    const chat = /^\/v1\/admin\/support\/[^/]+\/(messages|status)$/.test(request.routeOptions.url ?? '');
+    if (request.method !== 'GET' && !chat) {
       const token = request.headers['x-confirmation-token'];
       await services.auth.verifyConfirmation(typeof token === 'string' ? token : undefined, request.userId);
     }
   });
   app.get('/me', async request => services.manualAdmin.me(request.userId));
+  app.get('/support', async request => services.support.inbox(parse(z.object({ status: z.enum(['open', 'all']).default('open') }).strict(), request.query)));
+  app.get('/support/:userId', async request => services.support.adminThread(parse(target, request.params).userId));
+  app.post('/support/:userId/messages', async request => {
+    const { userId } = parse(target, request.params);
+    const { text } = parse(z.object({ text: z.string().max(4000) }).strict(), request.body);
+    return services.support.adminReply(request.userId, userId, text);
+  });
+  app.post('/support/:userId/status', async request => {
+    const { userId } = parse(target, request.params);
+    const { status } = parse(z.object({ status: z.enum(['open', 'closed']) }).strict(), request.body);
+    return services.support.adminSetStatus(userId, status);
+  });
   app.get('/applications', async request => services.manualAdmin.applications(request.userId, parse(z.object({
     page: z.coerce.number().int().min(1).max(100_000).default(1), limit: z.coerce.number().int().min(1).max(100).default(20),
   }).strict(), request.query)));

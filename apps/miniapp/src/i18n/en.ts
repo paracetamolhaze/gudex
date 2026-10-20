@@ -223,6 +223,8 @@ export const en: Translations = {
     a12: 'Make sure the card has enough money and isn’t frozen. If the store asks for a code, it arrives in the GUDEX bot. Some services don’t accept new cards for free trials — choose a paid plan right away.',
     q13: 'Is it safe? How do I freeze the card?',
     a13: 'Signing in and viewing card details are protected by your passcode or biometrics. If something is wrong, tap “Card” › “Freeze”: purchases and subscriptions will be declined, and the money stays on the card. You can unfreeze it at any time.',
+    q14: 'How do I contact support?',
+    a14: 'Open “Profile” › “Support” and write your question. The answer arrives there, and the GUDEX bot lets you know. Never send your passcode, confirmation codes or card details.',
   },
   kyc: {
     title: 'Verification',
@@ -461,6 +463,7 @@ export const en: Translations = {
       unknown: 'Result under review',
     },
     documents: 'Documents',
+    support: 'Support',
   },
   security: {
     section: 'Security',
@@ -523,6 +526,7 @@ export const en: Translations = {
     card_region_restricted: 'The phone country code in your details is not supported for this card.',
     quote_changed: 'The top-up terms changed. Review the updated amount and confirm again.',
     kyc_already_submitted: 'Your details are already under review',
+    rate_limited: 'Too many messages in a row. Please wait a few minutes.',
     insufficient_funds: 'Insufficient funds',
     card_limit: 'You already have a card',
     card_not_active: 'The card is not available for this action',
@@ -548,5 +552,14 @@ export const en: Translations = {
     updateTitle: 'GUDEX Terms of Use',
     updateText: 'To use GUDEX, read the documents and accept them.',
     close: 'Close',
+  },
+  support: {
+    title: 'Support',
+    intro: 'Write your question — we’ll answer here. The GUDEX bot will let you know when we reply.',
+    placeholder: 'Message',
+    send: 'Send',
+    team: 'GUDEX support',
+    unread: 'New answer',
+    hint: 'Never send your passcode, confirmation codes or card details — not even to us.',
   },
 };

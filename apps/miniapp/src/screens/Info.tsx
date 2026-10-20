@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router';
 import { NETWORKS } from '@gudex/shared';
 import { Icon } from '../components/Icon';
 import { Mascot } from '../components/Mascot';
@@ -147,19 +148,20 @@ export function Tariffs() {
 
 // ─── Помощь ──────────────────────────────────────────────────────────────
 
-const FAQ = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] as const;
+const FAQ = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] as const;
 
 export function Help() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const { data: config } = useConfig();
   const [open, setOpen] = useState<number | null>(null);
   if (!config) return <Loading />;
-  const { support, channel, site } = config.links;
+  const { channel, site } = config.links;
 
   return (
     <Page title={t('help.title')}>
       <div className="stack">
-        {support ? <Button title={t('help.support')} icon="chat" onClick={() => openTelegramLink(`https://t.me/${support}`)} /> : null}
+        <Button title={t('help.support')} icon="chat" onClick={() => navigate('/support')} />
         {channel ? (
           <Button title={t('help.channel')} icon="megaphone" variant="secondary" onClick={() => openTelegramLink(`https://t.me/${channel}`)} />
         ) : null}
