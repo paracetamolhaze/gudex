@@ -1,5 +1,5 @@
-import { type ReactNode, useEffect } from 'react';
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
+import { type ReactNode, useEffect, useLayoutEffect, useRef } from 'react';
+import { MemoryRouter, Route, Routes, useLocation, useNavigationType } from 'react-router';
 import { TabBar } from './components/TabBar';
 import { Loading } from './components/ui';
 import { setLocale } from './i18n';
@@ -16,6 +16,7 @@ import { Buy } from './screens/Buy';
 import { Help, Referral, Tariffs } from './screens/Info';
 import { LegalScreen, TermsGate } from './screens/Legal';
 import { AdminSupportThread, Support } from './screens/Support';
+import { ActivityDetails } from './screens/Activity';
 import { Transfer, Withdraw } from './screens/Money';
 import { History, Kyc, PinChange, Profile, WalletPay } from './screens/Other';
 import { CardIssue, CardTopup, Deposit } from './screens/Wallet';
@@ -31,11 +32,24 @@ function MainApp() {
     if (me?.locale) setLocale(me.locale);
   }, [me?.locale]);
 
-  // Каждый экран начинается сверху.
-  // Фигурные скобки обязательны: в новых браузерах scrollTo возвращает Promise, а эффект не должен.
-  useEffect(() => {
-    window.scrollTo(0, 0);
-  }, [location.pathname]);
+  // Каждый новый экран начинается сверху, а «Назад» возвращает туда, где список оставили (история → операция → назад).
+  // Позиция запоминается на каждый шаг истории; список уже нарисован из кэша, когда эффект её восстанавливает.
+  const navigationType = useNavigationType();
+  const scrolls = useRef(new Map<string, number>());
+  useLayoutEffect(() => {
+    const key = location.key;
+    window.scrollTo(0, navigationType === 'POP' ? scrolls.current.get(key) ?? 0 : 0);
+    const remember = () => {
+      scrolls.current.set(key, window.scrollY);
+    };
+    // Also on the tap that leaves the screen, before the next screen replaces the page.
+    window.addEventListener('scroll', remember, { passive: true });
+    window.addEventListener('click', remember, { capture: true });
+    return () => {
+      window.removeEventListener('scroll', remember);
+      window.removeEventListener('click', remember, { capture: true });
+    };
+  }, [location.key]);
 
   // Clients who signed up before the documents existed accept them once before using the app.
   if (me && me.termsAccepted === false) return <TermsGate />;
@@ -46,6 +60,7 @@ function MainApp() {
         <Route path="/" element={<Home />} />
         <Route path="/card" element={<CardScreen />} />
         <Route path="/history" element={<History />} />
+        <Route path="/activity/:id" element={<ActivityDetails />} />
         <Route path="/profile" element={<Profile />} />
         <Route path="/admin" element={<Admin />} />
         <Route path="/admin/clients/:query" element={<Admin />} />

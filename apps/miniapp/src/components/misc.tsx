@@ -9,7 +9,7 @@ import { AssetIcon } from './AssetIcon';
 import { Icon, type IconName } from './Icon';
 import { Notice, Segmented } from './ui';
 
-const ACTIVITY_ICON: Record<ActivityItemDto['kind'], IconName> = {
+export const ACTIVITY_ICON: Record<ActivityItemDto['kind'], IconName> = {
   deposit: 'arrowDown',
   withdrawal: 'arrowUpRight',
   transfer_in: 'send',
@@ -21,15 +21,21 @@ const ACTIVITY_ICON: Record<ActivityItemDto['kind'], IconName> = {
   card_refund: 'arrowDown',
 };
 
+// A purchase or a refund is named after the shop, everything else after its kind.
+export function activityTitle(item: ActivityItemDto, t: ReturnType<typeof useTranslation>['t']): string {
+  return (item.kind === 'card_purchase' || item.kind === 'card_refund') && item.merchant
+    ? item.merchant
+    : t(`activity.${item.kind}`, { asset: item.asset, who: item.counterparty ?? '' });
+}
+
+// A row of the operations list; tapping it opens the operation's details.
 export function ActivityRow({ item }: { item: ActivityItemDto }) {
   const { t } = useTranslation();
   const fmt = useFormat();
+  const navigate = useNavigate();
   const incoming = item.amount.startsWith('+');
   const failed = item.status === 'failed';
-  const title =
-    item.kind === 'card_purchase' && item.merchant
-      ? item.merchant
-      : t(`activity.${item.kind}`, { asset: item.asset, who: item.counterparty ?? '' });
+  const title = activityTitle(item, t);
   const details = [
     fmt.time(item.createdAt),
     item.cardLast4 ? `•• ${item.cardLast4}` : null,
@@ -42,7 +48,14 @@ export function ActivityRow({ item }: { item: ActivityItemDto }) {
   ].filter(Boolean);
 
   return (
-    <div className="row" style={{ padding: '8px 0' }}>
+    <button
+      type="button"
+      className="row activity-row"
+      onClick={() => {
+        haptic.select();
+        navigate(`/activity/${encodeURIComponent(item.id)}`, { state: { item } });
+      }}
+    >
       <span className="icon-circle" style={{ width: 42, height: 42 }}>
         <Icon name={ACTIVITY_ICON[item.kind]} color={incoming ? 'var(--success)' : 'var(--primary)'} size={20} />
       </span>
@@ -56,7 +69,7 @@ export function ActivityRow({ item }: { item: ActivityItemDto }) {
       >
         {fmt.amount(item.amount, item.asset, { sign: true })}
       </span>
-    </div>
+    </button>
   );
 }
 

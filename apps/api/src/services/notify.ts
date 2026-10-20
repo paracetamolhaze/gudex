@@ -39,7 +39,7 @@ const MESSAGES: Record<'ru' | 'en', (e: NotifyEvent) => string> = {
       case 'deposit':
         return `✅ Зачислено <b>${e.amount} ${e.asset}</b> (${e.network})`;
       case 'card_issued':
-        return `💳 Карта •• ${e.last4} выпущена и готова к оплате`;
+        return `💳 Карта •• ${e.last4} выпущена и готова к использованию`;
       case 'card_failed':
         if (e.additionalAttempt) return 'Дополнительная попытка выпуска не завершилась. Средства с вашего баланса не списывались.';
         return e.sponsored
@@ -60,18 +60,18 @@ const MESSAGES: Record<'ru' | 'en', (e: NotifyEvent) => string> = {
       case 'transfer_received':
         return `💸 Перевод от ${escape(e.from)}: <b>+${e.amount} ${e.asset}</b>`;
       case 'kyc_approved':
-        return '✅ Верификация пройдена — можно выпускать карту.';
+        return '✅ Верификация пройдена - можно выпускать карту.';
       case 'kyc_rejected':
         return 'Верификация не пройдена. Откройте приложение, чтобы попробовать снова.';
       case 'fee_paid':
-        return e.missing ? `Получено <b>${e.amount} ${e.asset}</b>. Для выпуска не хватает ${e.missing} ${e.asset} — ${e.minutesLeft
+        return e.missing ? `Получено <b>${e.amount} ${e.asset}</b>. Для выпуска не хватает ${e.missing} ${e.asset} - ${e.minutesLeft
           ? `отправьте их на тот же адрес в течение ${e.minutesLeft} мин.` : 'откройте приложение, чтобы доплатить.'}`
           : `✅ Получено <b>${e.amount} ${e.asset}</b> на оплату выпуска. Откройте приложение, чтобы продолжить.`;
       case 'application_paid':
         return `✅ <b>Оплата получена</b>: ${e.amount} ${e.asset}.
-Ожидайте проверку данных. Мы напишем, когда карта будет готова.`;
+Ожидайте проверки данных. Мы напишем, когда карта будет готова.`;
       case 'application_received':
-        return ['📝 <b>Данные отправлены на проверку</b>', 'Ожидайте проверку данных — мы напишем, когда карта будет готова.',
+        return ['📝 <b>Данные отправлены на проверку</b>', 'Ожидайте проверки данных - мы напишем, когда карта будет готова.',
           ...(e.sponsored ? [] : [`За выпуск зарезервировано ${e.amount} ${e.asset}.`])].join('\n');
       case 'application_rejected':
         return [`Верификация не пройдена: ${escape(e.reason)}`,
@@ -107,18 +107,18 @@ const MESSAGES: Record<'ru' | 'en', (e: NotifyEvent) => string> = {
       case 'transfer_received':
         return `💸 Transfer from ${escape(e.from)}: <b>+${e.amount} ${e.asset}</b>`;
       case 'kyc_approved':
-        return '✅ You are verified — you can now get a card.';
+        return '✅ You are verified - you can now get a card.';
       case 'kyc_rejected':
         return 'Verification failed. Open the app to try again.';
       case 'fee_paid':
-        return e.missing ? `Received <b>${e.amount} ${e.asset}</b>. ${e.missing} ${e.asset} is still missing for the card — ${e.minutesLeft
+        return e.missing ? `Received <b>${e.amount} ${e.asset}</b>. ${e.missing} ${e.asset} is still missing for the card - ${e.minutesLeft
           ? `send it to the same address within ${e.minutesLeft} min.` : 'open the app to pay the rest.'}`
           : `✅ Received <b>${e.amount} ${e.asset}</b> for the card. Open the app to continue.`;
       case 'application_paid':
         return `✅ <b>Payment received</b>: ${e.amount} ${e.asset}.
 Please wait while we check your details. We will message you when the card is ready.`;
       case 'application_received':
-        return ['📝 <b>Details sent for review</b>', "Please wait while we check your details — we'll message you when the card is ready.",
+        return ['📝 <b>Details sent for review</b>', "Please wait while we check your details - we'll message you when the card is ready.",
           ...(e.sponsored ? [] : [`${e.amount} ${e.asset} is reserved for the issuance fee.`])].join('\n');
       case 'application_rejected':
         return [`Verification declined: ${escape(e.reason)}`,
@@ -135,10 +135,10 @@ const CARD_REMINDER = {
   ru: [
     '💳 <b>Ваша карта GUDEX почти готова</b>',
     '',
-    'Осталось пару шагов:',
+    'Осталась пара шагов:',
     '1️⃣ Пройдите верификацию',
     '2️⃣ Оплатите выпуск в USDT или USDC',
-    '3️⃣ Дождитесь проверки — мы напишем, когда карта будет готова',
+    '3️⃣ Дождитесь проверки - мы напишем, когда карта будет готова',
     '',
     'Нажмите «Открыть GUDEX» 👇',
   ].join('\n'),
@@ -148,9 +148,9 @@ const CARD_REMINDER = {
     'Just a few steps left:',
     '1️⃣ Get verified',
     '2️⃣ Pay the issuance fee in USDT or USDC',
-    '3️⃣ Wait for the check — we’ll message you when the card is ready',
+    '3️⃣ Wait for our review - we’ll message you when the card is ready',
     '',
-    'Tap «Open GUDEX» 👇',
+    'Tap “Open GUDEX” 👇',
   ].join('\n'),
 };
 

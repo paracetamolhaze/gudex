@@ -254,8 +254,8 @@ export function CardIssue() {
         <AssetPicker wallet={wallet} value={asset} onChange={(value) => { issue.reset(); setAsset(value); }} />
       </>}
       <Surface className="stack">
-        <Row label={t('issue.fee')} value={quoteReady ? fmt.amount(quote.fee, 'USD') : '—'} />
-        <Row label={t('issue.total')} value={quoteReady ? fmt.amount(quote.customerCharge, asset) : '—'} strong />
+        <Row label={t('issue.fee')} value={quoteReady ? fmt.amount(quote.fee, 'USD') : '-'} />
+        <Row label={t('issue.total')} value={quoteReady ? fmt.amount(quote.customerCharge, asset) : '-'} strong />
       </Surface>
       {billing.data.required && billing.data.address ? <Surface className="stack-sm">
         <span className="label muted">{t('billing.title')}</span>
@@ -384,9 +384,9 @@ export function CardTopup() {
       <Surface className="stack">
         <Row
           label={t('topup.fee', { percent: fmt.percent(config.card.topupFeeBps / 100) })}
-          value={acceptedQuote ? fmt.amount(acceptedQuote.fee, asset) : '—'}
+          value={acceptedQuote ? fmt.amount(acceptedQuote.fee, asset) : '-'}
         />
-        <Row label={t('topup.receive')} value={acceptedQuote ? fmt.amount(acceptedQuote.netUsd, 'USD') : '—'} strong />
+        <Row label={t('topup.receive')} value={acceptedQuote ? fmt.amount(acceptedQuote.netUsd, 'USD') : '-'} strong />
       </Surface>
       {quote.error && amount ? <Notice tone="warning" text={fmt.error(quote.error)} action={<Button small variant="ghost" title={t('common.refresh')} onClick={() => void quote.refetch()} />} /> : null}
       {topup.error ? <Notice tone="danger" text={fmt.error(topup.error)} /> : null}

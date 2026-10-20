@@ -20,7 +20,7 @@ type ReadClient = Pick<UpayClient, 'readRequest' | 'loginInfo'>;
 type KycApproval = { submissionId: string; customerId: string; customerNo: string; documentsMatch: true };
 type CardBinding = { operationId: string; customerNo?: string; cardNumber: string; expiryMonth: number; expiryYear: number; cvv: string; email: string };
 const validUuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
-function conflict(message = 'The application changed; refresh it before continuing'): never { throw new AppError('validation', message); }
+function conflict(message = 'Заявка изменилась. Обновите страницу и повторите.'): never { throw new AppError('validation', message); }
 const fingerprint = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const name = (value: unknown) => typeof value === 'string' && value.trim() && !/[*•]/.test(value) ? value.trim().toUpperCase() : null;
 const contact = (value: unknown) => value === null || value === undefined || value === '' ? '' : typeof value === 'string' && !/[*•]/.test(value) ? value.trim() : null;
@@ -67,7 +67,7 @@ export class ManualAdminService {
     const byId = validUuid.test(query);
     if (!byId && (!/^[1-9]\d{0,18}$/.test(query) || BigInt(query) > 9223372036854775807n)) throw new AppError('validation', 'Enter an exact client ID or Telegram ID');
     const [user] = await this.db.select().from(users).where(byId ? eq(users.id, query) : eq(users.telegramId, BigInt(query)));
-    if (!user) throw new AppError('not_found', 'Client not found');
+    if (!user) throw new AppError('not_found', 'Клиент не найден');
     const [profile] = await this.db.select().from(kycProfiles).where(eq(kycProfiles.userId, user.id));
     const operations = await this.db.select({ op: cardOperations, card: cards }).from(cardOperations).innerJoin(cards, eq(cards.id, cardOperations.cardId))
       .where(and(eq(cardOperations.userId, user.id), eq(cards.userId, user.id))).orderBy(desc(cardOperations.createdAt)).limit(100);
@@ -114,7 +114,7 @@ export class ManualAdminService {
   private manualProfile(profile: Profile | undefined, submissionId: string): asserts profile is Profile {
     if (!profile || profile.submissionId !== submissionId || profile.partnerProvider !== 'upay' || profile.status !== 'pending' ||
       profile.submissionState !== 'manual_review' || profile.documentsSubmittedAt !== null) conflict();
-    if (!name(profile.firstName) || !name(profile.lastName) || !['id_card', 'passport', 'driving_license'].includes(profile.documentType ?? '')) conflict('Complete identity details are required');
+    if (!name(profile.firstName) || !name(profile.lastName) || !['id_card', 'passport', 'driving_license'].includes(profile.documentType ?? '')) conflict('В анкете не хватает имени, фамилии или типа документа');
   }
 
   private async currentDocuments(profile: Profile, db: DbOrTx) {
@@ -125,7 +125,7 @@ export class ManualAdminService {
 
   private async noActiveKycJobs(userId: string, db: DbOrTx) {
     const active = await db.select({ id: jobs.id }).from(jobs).where(sql`${jobs.payload}->>'userId' = ${userId} and ${jobs.queue} in ('kyc.submit','kyc.poll') and ${jobs.status} in ('queued','running')`);
-    if (active.length) conflict('An automatic verification task must finish before manual review');
+    if (active.length) conflict('Дождитесь завершения автоматической проверки анкеты и повторите.');
   }
 
   private reader() {
@@ -225,12 +225,12 @@ export class ManualAdminService {
       const page = object(await read.read(method, path, method === 'GET' ? { query: params } : { body: params }), 'provider page');
       if (!Array.isArray(page.list) || !Number.isSafeInteger(page.totalPages) || Number(page.totalPages) < 0 || Number(page.totalPages) > 20 ||
         page.pageNo !== undefined && page.pageNo !== pageNo || expectedPages !== undefined && page.totalPages !== expectedPages ||
-        page.totalPages === 0 && page.list.length !== 0 || page.list.length > 100) conflict('Provider pagination is incomplete');
+        page.totalPages === 0 && page.list.length !== 0 || page.list.length > 100) conflict('UPay вернул неполный список карт. Повторите позже.');
       expectedPages ??= Number(page.totalPages);
       rows.push(...page.list.map(item => object(item, 'provider row')));
       if (pageNo >= Number(page.totalPages)) return rows;
     }
-    return conflict('Provider pagination is incomplete');
+    return conflict('UPay вернул неполный список карт. Повторите позже.');
   }
 
   // Cards of the stored verified customer, or of the customer the operator names for an application under review.
@@ -239,7 +239,7 @@ export class ManualAdminService {
     const [profile] = await this.db.select().from(kycProfiles).where(eq(kycProfiles.userId, userId));
     const reviewing = profile?.status === 'pending' && profile.submissionState === 'manual_review' && profile.partnerProvider === 'upay';
     if (!reviewing && (profile?.status !== 'approved' || profile.partnerProvider !== 'upay' || !profile.partnerCustomerId)) conflict('Анкета клиента не готова к привязке карты');
-    if (reviewing && !identifier(requestedCustomerNo)) conflict('Укажите Customer No клиента в UPay');
+    if (reviewing && !identifier(requestedCustomerNo)) conflict('Укажите Customer ID клиента в UPay');
     const customerNo = reviewing ? requestedCustomerNo! : profile!.partnerCustomerId!;
     if (reviewing) {
       const foreign = await this.db.select({ userId: kycProfiles.userId }).from(kycProfiles).where(and(eq(kycProfiles.partnerCustomerId, customerNo), ne(kycProfiles.userId, userId)));
@@ -276,7 +276,7 @@ export class ManualAdminService {
     await this.db.transaction(async tx => {
       await this.assertAdmin(actor, tx);
       const [card] = await tx.select().from(cards).where(and(eq(cards.id, cardId), eq(cards.userId, userId))).for('update');
-      if (!card || !['pending', 'active', 'frozen'].includes(card.status)) throw new AppError('not_found', 'Card not found');
+      if (!card || !['pending', 'active', 'frozen'].includes(card.status)) throw new AppError('not_found', 'Карта не найдена');
       await tx.update(cards).set({ topupAddresses: Object.keys(addresses).length ? addresses : null, updatedAt: new Date() }).where(eq(cards.id, cardId));
       await tx.insert(adminAuditLog).values({ actorUserId: actor, targetUserId: userId, action: 'card_topup_addresses', reference: `${cardId}:${randomUUID()}`,
         metadata: { routes: Object.keys(addresses) } });
@@ -290,10 +290,10 @@ export class ManualAdminService {
     const year = input.expiryYear < 100 ? 2000 + input.expiryYear : input.expiryYear;
     const now = new Date();
     if (!luhnValid(pan)) conflict('Проверьте номер карты: он введён с ошибкой');
-    if (!/^\d{3,4}$/.test(input.cvv)) conflict('CVV — это 3 или 4 цифры');
+    if (!/^\d{3,4}$/.test(input.cvv)) conflict('CVV - это 3 или 4 цифры');
     if (!Number.isInteger(input.expiryMonth) || input.expiryMonth < 1 || input.expiryMonth > 12 || !Number.isInteger(year)
       || year > now.getUTCFullYear() + 15 || year * 12 + input.expiryMonth < now.getUTCFullYear() * 12 + now.getUTCMonth() + 1) conflict('Проверьте срок действия карты');
-    if (input.customerNo !== undefined && !identifier(input.customerNo)) conflict('Проверьте Customer No клиента в UPay');
+    if (input.customerNo !== undefined && !identifier(input.customerNo)) conflict('Проверьте Customer ID клиента в UPay');
     // The email the operator gave this client in UPay: codes sent there reach the client's Telegram.
     const mailAddress = await checkMailAddress(this.db, this.config.MAIL_DOMAIN, userId, input.email);
     const [profile] = await this.db.select().from(kycProfiles).where(eq(kycProfiles.userId, userId));
@@ -303,7 +303,7 @@ export class ManualAdminService {
     const approving = profile?.status === 'pending' && profile.submissionState === 'manual_review';
     if (approving) {
       this.manualProfile(profile, profile.submissionId ?? '');
-      if (!input.customerNo) conflict('Укажите Customer No клиента в UPay');
+      if (!input.customerNo) conflict('Укажите Customer ID клиента в UPay');
       await this.noActiveKycJobs(userId, this.db);
       const foreign = await this.db.select({ userId: kycProfiles.userId }).from(kycProfiles)
         .where(and(eq(kycProfiles.partnerCustomerId, input.customerNo!), ne(kycProfiles.userId, userId)));

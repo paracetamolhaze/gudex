@@ -39,7 +39,7 @@ describe('card-specific top-up minimum', () => {
     } }, { status: 422 })));
     const error = await fetchTopupQuote('USDT', '20', 'selected-card').catch((result: unknown) => result);
     expect(error).toMatchObject({ code: 'amount_too_small', minAmount: '20.17', asset: 'USDT' });
-    expect(errorMessage(error, 'ru')).toBe('Минимальная сумма — 20,17 USDT');
+    expect(errorMessage(error, 'ru')).toBe('Минимальная сумма - 20,17 USDT');
     expect(errorMessage(error, 'en')).toBe('The minimum amount is 20.17 USDT');
   });
 

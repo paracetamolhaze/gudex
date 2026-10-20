@@ -923,7 +923,7 @@ export class CardService {
           || op.partnerProvider !== this.config.CARD_PARTNER || profile?.status !== 'approved' || profile.partnerProvider !== this.config.CARD_PARTNER
           || !profile.partnerCustomerId || profile.partnerCustomerId !== manual.partnerCustomerId || profile.submissionId !== manual.submissionId
           || this.config.UPAY_PRODUCT_ID !== manual.productId || op.updatedAt.toISOString() !== manual.operationUpdatedAt) {
-          throw new AppError('validation', 'Only an approved client with an undispatched manual request can be linked');
+          throw new AppError('validation', 'Заявка или анкета изменилась. Обновите страницу и повторите.');
         }
         await tx.insert(adminAuditLog).values({ actorUserId: manual.actorUserId, targetUserId: manual.userId,
           action: 'card.linked', reference: manual.orderNo, metadata: { operationId, partnerCardId: issued.partnerCardId,

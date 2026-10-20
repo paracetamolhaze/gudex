@@ -65,7 +65,7 @@ export function botDescriptions(config: Config): Record<string, { description: s
   const ru = {
     description: description({
       intro: [
-        'GUDEX — крипто-карта Visa для покупок по всему миру.',
+        'GUDEX - криптокарта Visa для покупок по всему миру.',
         '',
         'С GUDEX вы можете:',
         '✔️ Пополнять карту в USDT и USDC',
@@ -76,10 +76,10 @@ export function botDescriptions(config: Config): Record<string, { description: s
       site: `🔗 Сайт: ${site}`,
       channel: channel && `📢 Канал: ${channel}`,
       support: support && `🆘 Поддержка: ${support}`,
-      supportWarning: '— она никогда не пишет первой',
+      supportWarning: '- она никогда не пишет первой',
       cta: 'Нажмите «Открыть GUDEX» внизу 👇',
     }),
-    short: fit('GUDEX — крипто-карта Visa для покупок по всему миру', [
+    short: fit('GUDEX - криптокарта Visa для покупок по всему миру', [
       support && `🆘 Помощь: ${support}`,
       `🔗 Сайт: ${site}`,
       channel && `📢 Канал: ${channel}`,
@@ -99,10 +99,10 @@ export function botDescriptions(config: Config): Record<string, { description: s
       site: `🔗 Website: ${site}`,
       channel: channel && `📢 Channel: ${channel}`,
       support: support && `🆘 Support: ${support}`,
-      supportWarning: '— it never messages first',
-      cta: 'Tap «Открыть GUDEX» below 👇',
+      supportWarning: '- it never messages first',
+      cta: 'Tap “Открыть GUDEX” below 👇',
     }),
-    short: fit('GUDEX — crypto Visa card for spending worldwide', [
+    short: fit('GUDEX - crypto Visa card for spending worldwide', [
       support && `🆘 Support: ${support}`,
       `🔗 Website: ${site}`,
       channel && `📢 Channel: ${channel}`,
@@ -118,7 +118,7 @@ function welcome(ru: boolean, support: string | null): string {
     ? [
         '👋 <b>Добро пожаловать в GUDEX!</b>',
         '',
-        'Крипто-карта Visa прямо в Telegram:',
+        'Криптокарта Visa прямо в Telegram:',
         '💳 Виртуальная карта Visa',
         '💸 Пополнение в USDT и USDC',
         '📱 Apple Pay и Google Pay',
@@ -135,7 +135,7 @@ function welcome(ru: boolean, support: string | null): string {
         '📱 Apple Pay and Google Pay',
         '🌍 Purchases and subscriptions worldwide',
         '',
-        'Tap «Open GUDEX» to get started 👇',
+        'Tap “Open GUDEX” to get started 👇',
       ];
   if (support) lines.push('', ru ? `🆘 Поддержка: @${support}` : `🆘 Support: @${support}`);
   return lines.join('\n');
@@ -186,7 +186,7 @@ export class BotService {
     }
 
     if (!this.config.publicUrl) return;
-    await this.bot.sendMessage(message.chat.id, ru ? 'Всё управление картой — в приложении GUDEX. Вопрос? Напишите в «Профиль» › «Поддержка» 👇' : 'Everything is managed in the GUDEX app. Questions? Write to “Profile” › “Support” 👇', {
+    await this.bot.sendMessage(message.chat.id, ru ? 'Всё управление картой - в приложении GUDEX. Вопрос? Напишите в «Профиль» › «Поддержка» 👇' : 'Everything is managed in the GUDEX app. Questions? Message us in “Profile” › “Support” 👇', {
       text: ru ? 'Открыть GUDEX' : 'Open GUDEX',
       url: this.config.publicUrl,
     });

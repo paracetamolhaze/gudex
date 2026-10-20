@@ -20,7 +20,7 @@ function assertPhone(phone: unknown, globalCode: unknown): void {
   // code, strip digits or silently change the customer's contact identity.
   if (typeof globalCode !== 'string' || !/^\+[1-9]\d{0,3}$/.test(globalCode) || typeof phone !== 'string'
     || !(globalCode === '+86' ? CHINA_PHONE : NATIONAL_PHONE).test(phone)) {
-    throw new PartnerError('UPay requires a national phone number of 5–13 digits, or a valid 11-digit China mobile number for +86', false);
+    throw new PartnerError('UPay requires a national phone number of 5-13 digits, or a valid 11-digit China mobile number for +86', false);
   }
 }
 

@@ -281,7 +281,7 @@ export class FeePaymentService {
   async assign(actorUserId: string, transferId: string, userId: string): Promise<WalletTransferDto> {
     return this.db.transaction(async tx => {
       const [target] = await tx.select({ id: users.id }).from(users).where(eq(users.id, userId)).for('update');
-      if (!target) throw new AppError('not_found', 'Client not found');
+      if (!target) throw new AppError('not_found', 'Клиент не найден');
       const [transfer] = await tx.select().from(walletTransfers).where(eq(walletTransfers.id, transferId)).for('update');
       if (!transfer || transfer.status !== 'unmatched') throw new AppError('validation', 'Этот платёж уже зачислен или ещё проверяется. Обновите список.');
       const depositId = await this.credit(tx, userId, transfer);

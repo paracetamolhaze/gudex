@@ -324,7 +324,12 @@ export interface ActivityItemDto {
   // Вторая сторона: @ник при переводе, адрес при выводе.
   counterparty: string | null;
   cardLast4: string | null;
+  /** The card the operation belongs to, for card operations only. */
+  cardId: string | null;
   network: Network | null;
+  /** Blockchain transaction behind a crypto deposit or withdrawal, and its page in a block explorer when known. */
+  txHash: string | null;
+  explorerUrl: string | null;
   createdAt: string;
 }
 

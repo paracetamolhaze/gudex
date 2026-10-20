@@ -72,10 +72,19 @@ describe('issuance fee on lent app wallet addresses', () => {
     expect(await ctx.db.select({ status: cardOperations.status, fulfillmentMode: cardOperations.fulfillmentMode }).from(cardOperations))
       .toEqual([{ status: 'pending', fulfillmentMode: 'manual' }]);
     expect(await usdt(user)).toBe('0');
+    // The history shows both payments with their chain transactions, then the card fee itself.
+    const history = (await user.http.get('/v1/activity')).body as { kind: string; amount: string; txHash: string | null; explorerUrl: string | null }[];
+    expect(history.filter(item => item.kind === 'deposit').map(({ amount, txHash, explorerUrl }) => ({ amount, txHash, explorerUrl })).sort((a, b) => a.amount.localeCompare(b.amount)))
+      .toEqual([{ amount: '+4', txHash: 'b'.repeat(64), explorerUrl: `https://tronscan.org/#/transaction/${'b'.repeat(64)}` },
+        { amount: '+6', txHash: 'a'.repeat(64), explorerUrl: `https://tronscan.org/#/transaction/${'a'.repeat(64)}` }]);
+    // The card waiting for issue has no last digits yet: its operations are tied to it by card id, other operations to none.
+    const [pending] = await ctx.db.select({ cardId: cardOperations.cardId }).from(cardOperations);
+    expect(history.find(item => item.kind === 'card_issue')).toMatchObject({ amount: '-10', txHash: null, explorerUrl: null, cardLast4: null, cardId: pending!.cardId });
+    expect(history.filter(item => item.kind === 'deposit').every(item => (item as unknown as { cardId: string | null }).cardId === null)).toBe(true);
     await ctx.settle();
     const toClient = ctx.bot.sent.filter(message => message.chatId === String(user.telegramId)).map(message => message.text);
     expect(toClient.some(text => text.includes('не хватает 4 USDT'))).toBe(true);
-    expect(toClient.some(text => text.includes('Оплата получена') && text.includes('Ожидайте проверку'))).toBe(true);
+    expect(toClient.some(text => text.includes('Оплата получена') && text.includes('Ожидайте проверки'))).toBe(true);
     expect(toClient.some(text => /специалист|вручную/i.test(text))).toBe(false);
     expect(ctx.bot.sent.filter(message => message.chatId === '999')).toHaveLength(1);
   });
@@ -99,7 +108,7 @@ describe('issuance fee on lent app wallet addresses', () => {
     expect(await usdt(noAddress)).toBe('10');
     await ctx.settle();
     expect(ctx.bot.sent.filter(message => message.chatId === '999')).toHaveLength(1);
-    expect(ctx.bot.sent.some(message => message.chatId === String(ready.telegramId) && message.text.includes('Ожидайте проверку'))).toBe(true);
+    expect(ctx.bot.sent.some(message => message.chatId === String(ready.telegramId) && message.text.includes('Ожидайте проверки'))).toBe(true);
     expect(ctx.bot.sent.some(message => message.chatId === String(noAddress.telegramId) && message.text.includes('чтобы продолжить'))).toBe(true);
   });
 
@@ -224,7 +233,7 @@ describe('issuance fee on lent app wallet addresses', () => {
     expect((await user.http.get('/v1/fee-payments/current')).body).toMatchObject({ status: 'expired', received: '6', missing: '4' });
     await ctx.settle();
     const notice = ctx.bot.sent.filter(message => message.chatId === String(user.telegramId)).map(message => message.text).find(text => text.includes('не хватает'));
-    expect(notice).toContain('не хватает 4 USDT — откройте приложение, чтобы доплатить.');
+    expect(notice).toContain('не хватает 4 USDT - откройте приложение, чтобы доплатить.');
     const rest = await user.http.post('/v1/fee-payments', { asset: 'USDT', network: 'TRC20' });
     expect(rest.body).toMatchObject({ status: 'awaiting', amount: '4', missing: '4' });
 

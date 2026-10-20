@@ -146,7 +146,7 @@ export function Withdraw() {
       />
       <Surface className="stack">
         <Row label={t('withdraw.fee')} value={fmt.amount(tariff.withdrawFee, asset)} />
-        <Row label={t('withdraw.receive')} value={receive ? fmt.amount(receive, asset) : '—'} strong />
+        <Row label={t('withdraw.receive')} value={receive ? fmt.amount(receive, asset) : '-'} strong />
       </Surface>
       {value !== null && value > 0n && !enough ? <Notice tone="warning" text={t('errors.insufficient_funds')} /> : null}
       <Notice tone="warning" text={t('withdraw.warning')} />

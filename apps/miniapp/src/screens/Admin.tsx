@@ -16,9 +16,9 @@ const statuses: Record<string, string> = {
   processing: 'В обработке', succeeded: 'Завершено', failed: 'Не выполнено', queued: 'В очереди', submitted: 'Отправлено',
   manual_review: 'Ручная проверка', manual_verified: 'Проверено администратором',
 };
-const documentNames = { front: 'Документ — лицевая сторона', back: 'Документ — оборотная сторона', selfie: 'Селфи' };
+const documentNames = { front: 'Документ - лицевая сторона', back: 'Документ - оборотная сторона', selfie: 'Селфи' };
 const date = (value: string | null | undefined) => value && Number.isFinite(Date.parse(value))
-  ? new Date(value).toLocaleString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+  ? new Date(value).toLocaleString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-';
 const identifierValid = (value: string) => /^[A-Za-z0-9_-]{1,128}$/.test(value);
 
 function Status({ value }: { value: string }) {
@@ -27,7 +27,7 @@ function Status({ value }: { value: string }) {
 }
 
 function Detail({ label, value }: { label: string; value?: string | null }) {
-  return <div className="admin-detail"><dt>{label}</dt><dd>{value || '—'}</dd></div>;
+  return <div className="admin-detail"><dt>{label}</dt><dd>{value || '-'}</dd></div>;
 }
 
 // Images never enter React Query or storage. Closing, expiry and relocking revoke the URL.
@@ -81,7 +81,7 @@ function Documents({ userId, documents, onViewed }: { userId: string; documents:
         <span className="caption muted">{Math.ceil(item.size / 1024)} КБ · доступен до {date(item.expiresAt)}</span></span>
       {loading === item.id ? <Spinner /> : <Icon name="chevronRight" size={18} />}
     </button>)}</div>
-    {!documents.length ? <p className="caption muted">Документы не сохранены или срок хранения завершён.</p> : null}
+    {!documents.length ? <p className="caption muted">Документы не сохранены или срок хранения истёк.</p> : null}
     {error ? <Notice text={error} tone="danger" /> : null}
     {preview ? <div className="admin-preview" role="dialog" aria-modal="true" aria-label={preview.title}>
       <div className="admin-preview-bar"><strong>{preview.title}</strong><button className="btn secondary small" onClick={close} autoFocus>Закрыть</button></div>
@@ -101,7 +101,7 @@ function CardTopupAddressesForm({ card, busy, onSave }: { card: AdminClient['car
   const valid = CARD_TOPUP_ROUTES.every(route => topupAddressValid(route.network, (values[route.key] ?? '').trim()));
   return <Surface className="stack">
     <h2 className="heading">Адреса пополнения карты{card.last4 ? ` •• ${card.last4}` : ''}</h2>
-    <span className="caption muted">Адреса из UPay, привязанные к этой карте. Клиент увидит их в «Пополнить». Пустое поле — сеть не показывается.</span>
+    <span className="caption muted">Адреса из UPay, привязанные к этой карте. Клиент увидит их в «Пополнить». Пустое поле - сеть не показывается.</span>
     {CARD_TOPUP_ROUTES.map(route => {
       const value = values[route.key] ?? '';
       return <Field key={route.key} label={`${route.asset} ${routeNames[route.network]}`} value={value} maxLength={64} disabled={busy} autoComplete="off"
@@ -170,7 +170,7 @@ function ClientReview({ client, onUpdated }: { client: AdminClient; onUpdated: (
       <div className="row between"><div><span className="admin-eyebrow">Клиент</span><h2 className="heading">
         {[kyc?.firstName, kyc?.lastName].filter(Boolean).join(' ') || (client.username ? `@${client.username}` : 'Без анкеты')}</h2></div>
         {operation ? <span className="admin-status">Ожидает карту</span> : kyc ? <Status value={kyc.status} /> : null}</div>
-      <dl className="admin-details"><Detail label="GUDEX ID" value={client.userId} /><Detail label="Telegram ID" value={client.telegramId} />
+      <dl className="admin-details"><Detail label="GUDEX UUID" value={client.userId} /><Detail label="Telegram ID" value={client.telegramId} />
         <Detail label="Имя в Telegram" value={client.username ? `@${client.username}` : null} /><Detail label="Регистрация" value={date(client.createdAt)} /></dl>
     </Surface>
     {success ? <Notice text={success} /> : null}
@@ -202,9 +202,9 @@ function ClientReview({ client, onUpdated }: { client: AdminClient; onUpdated: (
     {canLink ? <Surface className="stack">
       <h2 className="heading">Привязать карту</h2>
       <ol className="caption muted admin-steps">
-        {reviewing ? <li>Создайте клиента в UPay по данным анкеты и фото документов. Email — из поля «Почта» ниже.</li> : <li>Проверьте, что у клиента в UPay указана почта из поля ниже.</li>}
+        {reviewing ? <li>Создайте клиента в UPay по данным анкеты и фото документов. Email - из поля «Почта» ниже.</li> : <li>Проверьте, что у клиента в UPay указана почта из поля ниже.</li>}
         <li>Выпустите этому клиенту карту в UPay с нулевым пополнением.</li>
-        <li>Укажите Customer ID — по нему бот найдёт карту этого клиента в UPay. Номер, срок и CVV нужны, чтобы клиент видел реквизиты после кода-пароля.</li>
+        <li>Укажите Customer ID - по нему бот найдёт карту этого клиента в UPay. Номер, срок и CVV нужны, чтобы клиент видел реквизиты после ввода кода-пароля.</li>
       </ol>
       {reviewing ? <Field label="Customer ID в UPay" hint="Из таблицы клиентов UPay." value={customerNo} maxLength={128} disabled={busy} autoComplete="off"
         onChange={event => setCustomerNo(event.target.value.trim())} /> : <Detail label="Customer ID в UPay" value={verifiedCustomerNo} />}
@@ -243,7 +243,7 @@ function ClientReview({ client, onUpdated }: { client: AdminClient; onUpdated: (
       <h2 className="heading">Заявки по карте</h2>
       <span className="caption muted">Выполните операцию в UPay вручную, затем отметьте её здесь. При отказе деньги вернутся клиенту на баланс.</span>
       {requests.map(item => <div className="admin-operation" key={item.id}>
-        <div className="row between"><strong>{item.type === 'topup' ? `Пополнить карту на $${item.netUsd ?? '—'}` : item.type === 'freeze' ? 'Заморозить карту' : 'Разморозить карту'}</strong>
+        <div className="row between"><strong>{item.type === 'topup' ? `Пополнить карту на $${item.netUsd ?? '-'}` : item.type === 'freeze' ? 'Заморозить карту' : 'Разморозить карту'}</strong>
           {item.last4 ? <span className="admin-status">•• {item.last4}</span> : null}</div>
         <span className="caption muted">{date(item.createdAt)}{item.type === 'topup' && item.amount ? ` · клиент заплатил ${item.amount} ${item.asset} (комиссия ${item.fee} ${item.asset})` : ''}</span>
         <div className="admin-fields">
@@ -310,7 +310,7 @@ function WalletTransfers() {
   return <Surface className="stack">
     <div className="row between"><h2 className="heading">Платежи на кошелёк приложения</h2>
       <button className="link" disabled={transfers.isFetching} onClick={() => void transfers.refetch()}>Обновить</button></div>
-    <span className="caption muted">Здесь переводы, которые не совпали ни с одной суммой клиента: другая сумма, поздняя оплата или неизвестный отправитель. Проверьте перевод в обозревателе и зачислите его нужному клиенту.</span>
+    <span className="caption muted">Здесь переводы, которые не совпали ни с одной суммой клиента: другая сумма, поздняя оплата или неизвестный отправитель. Проверьте перевод в обозревателе блоков и зачислите его нужному клиенту.</span>
     {success ? <Notice text={success} /> : null}
     {error ? <Notice tone="danger" text={error} /> : null}
     {transfers.isPending ? <Spinner /> : transfers.isError ? <QueryError error={transfers.error} onRetry={() => void transfers.refetch()} /> :
@@ -318,7 +318,7 @@ function WalletTransfers() {
       transfers.data.map(item => <div className="admin-operation" key={item.id}>
         <div className="row between"><strong>{item.amount} {item.asset}</strong><span className="admin-status attention">Не распознан</span></div>
         <span className="caption muted">{networkNames[item.network] ?? item.network} · {date(item.blockTime)} · от {short(item.from)}
-          {!item.exact ? ' · сумма точнее 6 знаков' : ''}</span>
+          {!item.exact ? ' · больше 6 знаков после запятой' : ''}</span>
         <a className="caption link" href={item.explorerUrl} target="_blank" rel="noreferrer">Открыть перевод: {short(item.txHash)}</a>
         <div className="admin-search">
           <Field label="Клиент (GUDEX UUID или Telegram ID)" value={targets[item.id] ?? ''} maxLength={64} autoComplete="off" disabled={busy !== null}

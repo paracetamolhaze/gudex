@@ -36,7 +36,7 @@ export function Home() {
 
       <div className="stack-sm">
         <span className="label muted">{t('home.totalBalance')}</span>
-        <span className="display mono">{wallet.data ? fmt.amount(wallet.data.totalUsd, 'USD') : '—'}</span>
+        <span className="display mono">{wallet.data ? fmt.amount(wallet.data.totalUsd, 'USD') : '-'}</span>
       </div>
 
       <KycBanner />

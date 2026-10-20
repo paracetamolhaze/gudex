@@ -3,6 +3,7 @@ import { alias } from 'drizzle-orm/pg-core';
 import { type ActivityItemDto, type ActivityStatus, fromMinor, type Network, type WalletAsset } from '@gudex/shared';
 import type { Db } from '../db/client';
 import { cardOperations, cards, cardTransactions, deposits, referralRewards, transfers, users, withdrawals } from '../db/schema';
+import { EXPLORERS, type WatchNetwork } from '../payments/chain-watch';
 
 const sender = alias(users, 'sender');
 const receiver = alias(users, 'receiver');
@@ -10,6 +11,15 @@ const handle = (u: { username: string | null; firstName: string | null } | null)
 
 const opStatus = (status: string): ActivityStatus =>
   status === 'succeeded' ? 'succeeded' : status === 'failed' ? 'failed' : status === 'unknown' ? 'unknown' : 'pending';
+
+// A payment to an app-wallet address keeps its chain transaction in the deposit id: app-wallet:<network>:<hash>:<log index>.
+const depositHash = (providerId: string, externalId: string): string | null => {
+  const parts = externalId.split(':');
+  return providerId === 'app-wallet' && parts.length === 4 && parts[2] ? parts[2] : null;
+};
+const explorerUrl = (network: string, txHash: string | null): string | null =>
+  txHash && network in EXPLORERS ? `${EXPLORERS[network as WatchNetwork]}${txHash}` : null;
+const noChain = { txHash: null, explorerUrl: null };
 
 // Лента операций пользователя: депозиты, выводы, переводы, бонусы, операции с картой и покупки — вперемешку по времени.
 export class ActivityService {
@@ -55,19 +65,25 @@ export class ActivityService {
     ]);
 
     const items: ActivityItemDto[] = [
-      ...depositRows.map((d) => ({
-        id: `deposit:${d.id}`,
-        kind: 'deposit' as const,
-        status: 'succeeded' as const,
-        asset: d.asset as WalletAsset,
-        amount: `+${fromMinor(d.amount, d.asset as WalletAsset)}`,
-        fee: null,
-        merchant: null,
-        counterparty: null,
-        cardLast4: null,
-        network: d.network as Network,
-        createdAt: d.createdAt.toISOString(),
-      })),
+      ...depositRows.map((d) => {
+        const txHash = depositHash(d.providerId, d.externalId);
+        return {
+          id: `deposit:${d.id}`,
+          kind: 'deposit' as const,
+          status: 'succeeded' as const,
+          asset: d.asset as WalletAsset,
+          amount: `+${fromMinor(d.amount, d.asset as WalletAsset)}`,
+          fee: null,
+          merchant: null,
+          counterparty: null,
+          cardLast4: null,
+          cardId: null,
+          network: d.network as Network,
+          txHash,
+          explorerUrl: explorerUrl(d.network, txHash),
+          createdAt: d.createdAt.toISOString(),
+        };
+      }),
       ...withdrawalRows.map((w) => {
         const asset = w.asset as WalletAsset;
         return {
@@ -80,7 +96,10 @@ export class ActivityService {
           merchant: null,
           counterparty: w.address,
           cardLast4: null,
+          cardId: null,
           network: w.network as Network,
+          txHash: w.txHash,
+          explorerUrl: explorerUrl(w.network, w.txHash),
           createdAt: w.createdAt.toISOString(),
         };
       }),
@@ -97,7 +116,9 @@ export class ActivityService {
           merchant: null,
           counterparty: handle(incoming ? sender : receiver),
           cardLast4: null,
+          cardId: null,
           network: null,
+          ...noChain,
           createdAt: transfer.createdAt.toISOString(),
         };
       }),
@@ -113,7 +134,9 @@ export class ActivityService {
           merchant: null,
           counterparty: null,
           cardLast4: null,
+          cardId: null,
           network: null,
+          ...noChain,
           createdAt: r.createdAt.toISOString(),
         };
       }),
@@ -130,7 +153,9 @@ export class ActivityService {
           merchant: null,
           counterparty: null,
           cardLast4: last4,
+          cardId: op.cardId,
           network: null,
+          ...noChain,
           createdAt: op.createdAt.toISOString(),
         };
       }),
@@ -144,7 +169,9 @@ export class ActivityService {
         merchant: tx.merchant,
         counterparty: null,
         cardLast4: last4,
+        cardId: tx.cardId,
         network: null,
+        ...noChain,
         createdAt: tx.occurredAt.toISOString(),
       })),
     ];

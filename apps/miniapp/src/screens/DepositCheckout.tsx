@@ -69,7 +69,7 @@ export function DepositCheckout({ creationEnabled = true }: { creationEnabled?: 
       </Surface>
       <Surface className="stack">
         <Row label={t('checkout.requested')} value={`${invoice.requestedAmount} ${invoice.asset}`} />
-        <Row label={t('deposit.network')} value={NETWORKS[invoice.network]?.name ?? '—'} />
+        <Row label={t('deposit.network')} value={NETWORKS[invoice.network]?.name ?? '-'} />
         {credited !== null ? <Row label={t('checkout.creditedAmount')} value={`${credited} ${invoice.asset}`} strong /> : null}
       </Surface>
       {state === 'awaiting_payment' ? <Notice text={t('checkout.feeNote')} /> : null}

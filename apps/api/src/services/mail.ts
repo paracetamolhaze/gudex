@@ -275,7 +275,7 @@ export class MailService {
     try {
       await this.db.transaction(async tx => {
         const [user] = await tx.select({ id: users.id }).from(users).where(eq(users.id, userId)).for('update');
-        if (!user) throw new AppError('not_found', 'Client not found');
+        if (!user) throw new AppError('not_found', 'Клиент не найден');
         await assignMailAddress(tx, userId, address);
         await tx.insert(adminAuditLog).values({ actorUserId: actor, targetUserId: userId, action: 'mail_address_set', reference: `${address}:${randomUUID()}`,
           metadata: { address } });

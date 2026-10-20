@@ -88,7 +88,7 @@ export function Profile() {
       <Surface className="row">
         <span className="avatar">{tg?.photoUrl ? <img src={tg.photoUrl} alt="" /> : <Icon name="user" color="var(--primary)" />}</span>
         <div className="stack-sm grow">
-          <span className="body-medium ellipsis">{name || '—'}</span>
+          <span className="body-medium ellipsis">{name || '-'}</span>
           {tg?.username ? <span className="muted">@{tg.username}</span> : null}
         </div>
       </Surface>
@@ -515,8 +515,8 @@ function KycForm({ rejectionReason }: { rejectionReason: string | null }) {
           <AssetPicker wallet={wallet.data} value={asset} onChange={(value) => { apply.reset(); setAsset(value); }} />
         </>}
         <Surface className="stack">
-          <Row label={t('issue.fee')} value={quoteReady ? fmt.amount(quote.fee, 'USD') : '—'} />
-          <Row label={t('issue.total')} value={quoteReady ? fmt.amount(quote.customerCharge, asset) : '—'} strong />
+          <Row label={t('issue.fee')} value={quoteReady ? fmt.amount(quote.fee, 'USD') : '-'} />
+          <Row label={t('issue.total')} value={quoteReady ? fmt.amount(quote.customerCharge, asset) : '-'} strong />
         </Surface>
         <span className="caption muted">{t('kyc.applicationPaymentHint')}</span>
         {quoteQuery.error ? <QueryError error={quoteQuery.error} onRetry={() => void quoteQuery.refetch()} /> : null}

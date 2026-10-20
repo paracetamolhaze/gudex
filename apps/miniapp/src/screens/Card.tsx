@@ -124,7 +124,8 @@ function CardView({ card }: { card: CardDto }) {
   const active = card.status === 'active';
   const frozen = card.status === 'frozen';
   const busy = setFrozen.isPending || (statusOpId !== null && statusOp.data?.status !== 'succeeded' && statusOp.data?.status !== 'failed');
-  const cardActivity = (activity.data ?? []).filter((a) => a.kind !== 'deposit' && a.cardLast4 === card.last4);
+  // Matched by card id: a card waiting for issue has no last digits yet, like every non-card operation.
+  const cardActivity = (activity.data ?? []).filter((a) => a.cardId === card.id);
   const issueRestricted = card.issueRestriction === 'billing_phone_region_restricted';
 
   const toggleFrozen = async () => {

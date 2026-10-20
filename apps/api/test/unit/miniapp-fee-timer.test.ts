@@ -36,7 +36,7 @@ describe('payment address countdown', () => {
     const html = render();
     expect(html).toContain('Осталось времени на оплату');
     expect(html).toMatch(/>09:(2\d|30)</);
-    expect(html).toContain('Адрес закреплён за вами на 10 минут. Не успели — получите адрес заново.');
+    expect(html).toContain('Адрес закреплён за вами на 10 минут. Не успели - получите адрес заново.');
     expect(html).not.toContain('color:var(--danger)');
   });
 
