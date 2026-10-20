@@ -25,6 +25,8 @@
   --font: 'Onest Variable', 'Onest', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   /* Только для надписи GUDEX на карте: широкий фирменный шрифт. */
   --font-brand: 'Unbounded Variable', 'Onest Variable', system-ui, sans-serif;
+  /* Номер на карте: моноширинный, как тиснение на пластиковой карте. */
+  --font-card: 'Share Tech Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   color-scheme: dark;
 }
 
@@ -862,12 +864,37 @@ textarea {
   transform: translateY(-50%);
   display: flex;
   justify-content: space-between;
+  font-family: var(--font-card);
+  /* Four groups of 2.64em plus three gaps of about 1em fill the card's inner width (screen minus 76px of margins). */
   font-size: 20px;
-  font-size: clamp(17px, 5.8vw, 22px);
-  font-weight: 500;
-  letter-spacing: 0.04em;
-  font-variant-numeric: tabular-nums;
+  font-size: clamp(16px, calc((100vw - 76px) / 13.6), 24px);
+  font-weight: 400;
+  line-height: 1;
   white-space: nowrap;
+}
+
+.bank-card .number-group {
+  display: inline-flex;
+  gap: 0.08em;
+}
+
+.bank-card .number b,
+.bank-card .number-dot {
+  display: inline-flex;
+  width: 0.6em;
+  height: 1em;
+  align-items: center;
+  justify-content: center;
+  font-weight: inherit;
+}
+
+.bank-card .number-dot::before {
+  content: '';
+  width: 0.3em;
+  height: 0.3em;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.9;
 }
 
 .bank-card-holder {

@@ -42,8 +42,13 @@ export function BankCard({ card, sensitive, placeholder }: { card?: CardDto; sen
         </span>
         <span className="bank-card-tag">{sensitive ? `CVV ${sensitive.cvv}` : 'VIRTUAL'}</span>
       </div>
-      <div className="number">
-        {number.map((group, index) => <span key={index}>{group}</span>)}
+      {/* Every digit and every dot takes the same cell, so the four groups are equal, like on a plastic card. */}
+      <div className="number" role="img" aria-label={number.join(' ')}>
+        {number.map((group, index) => (
+          <span key={index} className="number-group" aria-hidden>
+            {[...group].map((char, cell) => (char === '•' ? <i key={cell} className="number-dot" /> : <b key={cell}>{char}</b>))}
+          </span>
+        ))}
       </div>
       <div className="row between" style={{ alignItems: 'flex-end' }}>
         <div className="bank-card-holder">

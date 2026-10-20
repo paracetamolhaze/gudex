@@ -1,5 +1,6 @@
 import '@fontsource-variable/onest';
 import '@fontsource-variable/unbounded';
+import '@fontsource/share-tech-mono/latin-400.css';
 import './styles.css';
 import './i18n';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
